@@ -3,27 +3,29 @@ import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/lib/supabaseClient";
-import { isDevMode, getDevProfile } from "@/lib/devAuth";
+import { getDevProfile } from "@/lib/devAuth";
 
 export default function AppShell() {
-  const { user, signOut } = useAuth();
+  const { user, devMode, signOut } = useAuth();
   const [profile, setProfile] = useState(null);
 
   useEffect(() => {
     if (!user) return;
-    
-    if (isDevMode()) {
+    // TEMPORARY: dev mode skips the real `users` table lookup (it doesn't
+    // exist until your Supabase schema is created) and uses the hardcoded
+    // profile instead. Once devMode is false this branch is simply never
+    // taken — nothing to delete by hand later.
+    if (devMode) {
       setProfile(getDevProfile());
       return;
     }
-
     supabase
       .from("users")
       .select("first_name, last_name, role")
       .eq("user_id", user.id)
       .single()
       .then(({ data }) => setProfile(data));
-  }, [user]);
+  }, [user, devMode]);
 
   return (
     <div className="flex h-screen bg-background">

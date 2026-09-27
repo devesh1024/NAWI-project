@@ -3,11 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Scale } from "lucide-react";
+import { Scale, FlaskConical } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { DEMO_CREDENTIALS } from "@/lib/devAuth";
 import { Button } from "@/components/ui/Button";
 import { EclipseGlow } from "@/components/effects/EclipseGlow";
-import { isDevMode, DEMO_CREDENTIALS } from "@/lib/devAuth";
+import { BrandLogo } from "@/components/layout/BrandLogo";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -16,8 +17,8 @@ const schema = z.object({
 
 export default function Login() {
   const navigate = useNavigate();
+  const { signIn, devMode } = useAuth();
   const [formError, setFormError] = useState("");
-  const { signIn } = useAuth();
   const {
     register,
     handleSubmit,
@@ -26,7 +27,10 @@ export default function Login() {
 
   async function onSubmit(values) {
     setFormError("");
-    const { error } = await signIn({ email: values.email, password: values.password });
+    // signIn() checks isDevMode() internally — this call becomes a real
+    // Supabase sign-in automatically once .env has real project values,
+    // no change needed here. See src/hooks/useAuth.jsx.
+    const { error } = await signIn(values.email, values.password);
     if (error) {
       setFormError(error.message);
       return;
@@ -38,21 +42,23 @@ export default function Login() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
       <EclipseGlow />
       <div className="relative w-full max-w-sm rounded-2xl border border-border bg-surface p-8 shadow-raised">
-        <Link to="/" className="mb-6 flex items-center gap-2 font-heading text-lg font-semibold">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rail text-rail-foreground">
-            <Scale className="h-4 w-4" />
-          </span>
-          NAWI TestSuite
-        </Link>
+        <BrandLogo className="mb-6" />
         <h1 className="text-xl font-semibold">Login to your lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Use the credentials your lab admin created for you.
-          {isDevMode() && (
-            <span className="block mt-2 font-mono text-xs bg-muted p-2 rounded">
-              Demo: {DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}
-            </span>
-          )}
         </p>
+
+        {devMode && (
+          <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-accent/30 bg-accent/10 p-3 text-xs text-accent-foreground">
+            <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <div>
+              <p className="font-medium">No Supabase project connected yet — using a temporary demo login.</p>
+              <p className="mt-1 font-num">
+                {DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}
+              </p>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4">
           <div>

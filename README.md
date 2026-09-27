@@ -7,13 +7,31 @@ Supabase (client wired, schema/RLS not yet created).
 
 ```bash
 npm install
-cp .env.example .env   # then fill in your Supabase project's URL + anon key
 npm run dev
 ```
 
-Without a `.env`, the app still runs — the landing page, login/register forms,
-and dashboard render fine (dashboard uses sample data). Login/Register will
-fail gracefully with a Supabase error until you connect a real project.
+### Logging in right now (no Supabase project yet)
+
+Without a `.env`, the app auto-detects there's no Supabase project connected
+and switches to a **temporary hardcoded demo login** so you can actually click
+through the authenticated app:
+
+```
+demo@nawitest.local / demo1234
+```
+
+This is shown on the login screen itself while it's active. It's a *dev-mode
+switch*, not a separate code path you'll need to rip out by hand:
+
+- `src/lib/devAuth.js` — the hardcoded user + a tiny localStorage-backed "session"
+- `src/hooks/useAuth.jsx` — the only file that branches on `isDevMode()`; every
+  other component (Login, Register, AppShell) calls `signIn()` / `signOut()`
+  from `useAuth()` and has no idea whether it's talking to Supabase or the demo user
+
+**To switch to real Supabase**: just fill in `.env` (copy `.env.example`) with
+your project's URL and anon key. `isDevMode()` returns `false` automatically
+the moment `VITE_SUPABASE_URL` is set — no file needs to be touched, deleted,
+or reverted. The demo credentials simply stop being offered.
 
 ## What's built in this pass
 

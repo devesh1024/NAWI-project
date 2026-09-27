@@ -12,6 +12,7 @@ import {
   ScrollText,
   Settings,
   Scale,
+  Home,
 } from "lucide-react";
 
 // role gate: null = visible to everyone signed in
@@ -35,9 +36,13 @@ export function Sidebar({ role }) {
 
   return (
     <aside className="flex h-screen w-[76px] flex-col items-center gap-1 bg-rail py-5">
-      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-rail-foreground">
+      <NavLink
+        to="/app/dashboard"
+        className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-rail-foreground"
+        data-cursor-hover
+      >
         <Scale className="h-5 w-5" />
-      </div>
+      </NavLink>
 
       <nav className="flex flex-1 flex-col items-center gap-1">
         {items.map((item) => (
@@ -64,6 +69,15 @@ export function Sidebar({ role }) {
           </NavLink>
         ))}
       </nav>
+
+      {/* Only way back to the marketing site while signed in — the logo above
+          intentionally goes to the dashboard instead, per the agreed logo behavior. */}
+      <NavLink to="/" data-cursor-hover className="group relative mb-1 flex h-11 w-11 items-center justify-center">
+        <Home className="h-5 w-5 text-rail-foreground/60 group-hover:text-rail-foreground" />
+        <span className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-md bg-rail px-2 py-1 text-xs text-rail-foreground opacity-0 shadow-raised transition-opacity group-hover:opacity-100">
+          Visit Home Page
+        </span>
+      </NavLink>
 
       <NavLink to="/app/settings" data-cursor-hover>
         {({ isActive }) => (

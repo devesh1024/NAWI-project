@@ -7,6 +7,7 @@ import { Scale } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/Button";
 import { EclipseGlow } from "@/components/effects/EclipseGlow";
+import { BrandLogo } from "@/components/layout/BrandLogo";
 
 // Mirrors the `laboratories` table + the lab_admin `users` row created alongside it.
 const schema = z.object({
@@ -127,12 +128,7 @@ export default function Register() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-12">
       <EclipseGlow />
       <div className="relative w-full max-w-2xl rounded-2xl border border-border bg-surface p-8 shadow-raised">
-        <Link to="/" className="mb-6 flex items-center gap-2 font-heading text-lg font-semibold">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rail text-rail-foreground">
-            <Scale className="h-4 w-4" />
-          </span>
-          NAWI TestSuite
-        </Link>
+        <BrandLogo className="mb-6" />
         <h1 className="text-xl font-semibold">Register your laboratory</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           This creates your laboratory record and its first lab-admin account.
