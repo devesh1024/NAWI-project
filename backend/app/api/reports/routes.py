@@ -20,7 +20,7 @@ from backend.app.models.report import Report
 
 from backend.app.utils.dependencies import get_current_user
 from backend.app.services.report_generation.report_generator import create_report
-
+from backend.app.services.report_generation.pdf_generator import create_pdf
 
 router = APIRouter(
     prefix="/api/test-sessions",
@@ -655,6 +655,10 @@ def generate_report(
         reports_dir
         / f"NAWI_Report_{test_session_id}.docx"
     )
+    pdf_output_path = (
+    reports_dir
+    / f"NAWI_Report_{test_session_id}.pdf"
+    )
 
     # --------------------------------------------------------
     # Generate DOCX
@@ -663,6 +667,11 @@ def generate_report(
     create_report(
         report_data,
         output_path=str(output_path)
+    )
+
+    create_pdf(
+    report_data,
+    output_path=str(pdf_output_path)
     )
 
     # --------------------------------------------------------
@@ -682,6 +691,7 @@ def generate_report(
             ),
             generated_by=current_user.user_id,
             docx_path=str(output_path),
+            pdf_path=str(pdf_output_path),
             remarks=(
                 report_data["test_session"]
                 ["remarks"]
@@ -705,7 +715,10 @@ def generate_report(
         report.docx_path = str(
             output_path
         )
-
+        report.pdf_path = str(
+        pdf_output_path
+        )
+        
         db.commit()
         db.refresh(report)
 
