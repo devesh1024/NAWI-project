@@ -12,6 +12,7 @@ from backend.app.models.test_session_test import TestSessionTest
 from backend.app.models.test_observation import TestObservation
 from backend.app.models.test_calculation import TestCalculation
 from backend.app.models.test_result import TestResult
+from backend.app.models.report import Report
 
 Base.metadata.create_all(bind=engine)
 

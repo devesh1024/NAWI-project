@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.database.connection import get_db
 from backend.app.models.test_session import TestSession
+from backend.app.models.test_session_test import TestSessionTest
 from backend.app.models.instrument import Instrument
 from backend.app.models.user import User
 from backend.app.schemas.test_session_status import TestSessionStatusUpdate
@@ -97,6 +98,8 @@ def get_test_session(
         )
 
     return session
+
+
 @router.patch("/{test_session_id}/status")
 def update_test_session_status(
     test_session_id: str,
@@ -134,12 +137,50 @@ def update_test_session_status(
             detail=f"Invalid status. Allowed values: {sorted(allowed_statuses)}"
         )
 
+    # Update session status
     session.status = data.status
+
+    # Calculate overall result when the session is submitted
+    if data.status == "SUBMITTED":
+
+        session_tests = db.query(TestSessionTest).filter(
+            TestSessionTest.test_session_id == session.test_session_id
+        ).all()
+
+        applicable_tests = [
+            test
+            for test in session_tests
+            if test.applicability_status != "NOT_APPLICABLE"
+        ]
+
+        # No tests yet
+        if not applicable_tests:
+            session.overall_result = None
+
+        # Any applicable test failed
+        elif any(
+            test.result == "FAIL"
+            for test in applicable_tests
+        ):
+            session.overall_result = "FAIL"
+
+        # All applicable tests passed
+        elif all(
+            test.result == "PASS"
+            for test in applicable_tests
+        ):
+            session.overall_result = "PASS"
+
+        # Tests are still incomplete
+        else:
+            session.overall_result = None
+
     db.commit()
     db.refresh(session)
 
     return {
         "message": "Test session status updated successfully",
         "test_session_id": str(session.test_session_id),
-        "status": session.status
+        "status": session.status,
+        "overall_result": session.overall_result
     }
