@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 from backend.app.database.connection import get_db
 from backend.app.models.test_session import TestSession
@@ -12,6 +14,8 @@ from backend.app.models.test_observation import TestObservation
 from backend.app.models.test_calculation import TestCalculation
 from backend.app.models.test_result import TestResult
 from backend.app.utils.dependencies import get_current_user
+
+from backend.app.services.report_generation.report_generator import create_report
 
 router = APIRouter(
     prefix="/api/test-sessions",
@@ -194,3 +198,39 @@ def get_report_data(
 
         "tests": tests
     }
+
+@router.post("/{test_session_id}/generate-report")
+def generate_report(
+    test_session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Get the same structured data used by the report-data endpoint
+    report_data = get_report_data(
+        test_session_id=test_session_id,
+        db=db,
+        current_user=current_user
+    )
+
+    # Create folder for generated reports
+    reports_dir = Path("generated_reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    # Output file
+    output_path = reports_dir / f"NAWI_Report_{test_session_id}.docx"
+
+    # Generate DOCX
+    create_report(
+        report_data,
+        output_path=str(output_path)
+    )
+
+    # Return generated DOCX
+    return FileResponse(
+        path=str(output_path),
+        filename=f"NAWI_Test_Report_{test_session_id}.docx",
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        )
+    )
