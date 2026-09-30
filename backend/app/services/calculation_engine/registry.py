@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .context import EvaluationContext, InstrumentContext, RuleSet
 from .engine import CalculationEngine
+from .rules_loader import load_r76_rules
 
 from .creep import calculate_creep
 from .discrimination import calculate_discrimination
@@ -50,3 +51,22 @@ def create_calculation_engine(
     engine.register("SPAN", calculate_span_stability)
 
     return engine
+
+
+def create_r76_calculation_engine(
+    *,
+    instrument: InstrumentContext,
+    evaluation: EvaluationContext,
+) -> CalculationEngine:
+    """
+    Create a calculation engine using the bundled
+    OIML R76-1:2006 ruleset.
+    """
+
+    rules = load_r76_rules()
+
+    return create_calculation_engine(
+        instrument=instrument,
+        evaluation=evaluation,
+        rules=rules,
+    )

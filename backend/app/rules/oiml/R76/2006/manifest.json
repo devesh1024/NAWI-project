@@ -1,0 +1,45 @@
+{
+    "ruleset_id": "OIML_R76_1_2006",
+    "ruleset_version": "R76-1:2006",
+    "standard": "OIML R 76-1",
+    "edition_year": 2006,
+    "scope": "Non-automatic weighing instruments",
+    "evaluation_mode": "TYPE_EVALUATION",
+    "prototype_scope": {
+        "accuracy_class": "III",
+        "instrument_type": "ELECTRONIC",
+        "indication_type": "DIGITAL",
+        "self_indicating": true,
+        "single_range": true,
+        "multi_interval": false,
+        "max_capacity": "30",
+        "min_capacity": "0.2",
+        "e": "0.01",
+        "d": "0.01",
+        "platform_type": "CONVENTIONAL",
+        "power_supply": "AC",
+        "nominal_voltage": "230",
+        "mobile": false
+    },
+    "rule_files": {
+        "tests": "tests.json",
+        "applicability": "applicability.json",
+        "requirements": "requirements.json",
+        "calculations": "calculations.json",
+        "mpe_rules": "mpe_rules.json"
+    },
+    "supported_tests": [
+        "WP",
+        "TEMP_STATIC",
+        "TEMP_NO_LOAD",
+        "ECC_WEIGHT",
+        "REP",
+        "DIS",
+        "ZR",
+        "CRP",
+        "TARE",
+        "WARMUP",
+        "VOLT",
+        "SPAN"
+    ]
+}

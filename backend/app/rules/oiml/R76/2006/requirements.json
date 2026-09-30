@@ -1,0 +1,148 @@
+{
+    "ruleset_version": "R76-1:2006",
+    "tests": {
+        "WP": {
+            "requirements": {
+                "evaluation_basis": "INITIAL_VERIFICATION",
+                "error_basis": "CORRECTED_ERROR",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "TEMP_STATIC": {
+            "requirements": {
+                "temperature_sequence_c": [
+                    20,
+                    40,
+                    -10,
+                    5,
+                    20
+                ],
+                "temperature_stabilization_required": true,
+                "error_basis": "CORRECTED_ERROR",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "TEMP_NO_LOAD": {
+            "requirements": {
+                "temperature_sequence_c": [
+                    20,
+                    40,
+                    -10
+                ],
+                "zero_change_normalization_temperature_c": 5,
+                "zero_indication_limit_multiplier_e_per_5c": "1"
+            }
+        },
+        "ECC_WEIGHT": {
+            "requirements": {
+                "test_load_fraction_of_max": "1/3",
+                "required_positions": 4,
+                "error_basis": "CORRECTED_ERROR",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "REP": {
+            "requirements": {
+                "series_count": 2,
+                "weighings_per_series": 10,
+                "series_loads": [
+                    {
+                        "description": "approximately_50_percent_max",
+                        "load": "15"
+                    },
+                    {
+                        "description": "close_to_max",
+                        "load": "30"
+                    }
+                ],
+                "acceptance": {
+                    "individual_error": "ABSOLUTE_CORRECTED_ERROR_LE_MPE",
+                    "repeatability_range": "LE_ABSOLUTE_MPE"
+                }
+            }
+        },
+        "DIS": {
+            "requirements": {
+                "test_loads": [
+                    "MIN",
+                    "HALF_MAX",
+                    "MAX"
+                ],
+                "added_load_fraction_d": "0.1",
+                "indication_change_fraction_d": "1"
+            }
+        },
+        "ZR": {
+            "requirements": {
+                "load_condition": "NEAR_MAX",
+                "duration_minutes": 30,
+                "zero_deviation_limit_multiplier_e": "0.5"
+            }
+        },
+        "CRP": {
+            "requirements": {
+                "reading_times_minutes": [
+                    0,
+                    5,
+                    15,
+                    30,
+                    60,
+                    120,
+                    180,
+                    240
+                ],
+                "temperature_variation_limit_c": 2,
+                "early_termination": {
+                    "enabled": true,
+                    "time_minutes": 30,
+                    "change_limit_multiplier_e": "0.5",
+                    "last_interval_change_limit_multiplier_e": "0.2",
+                    "last_interval_start_minutes": 15
+                },
+                "final_acceptance": "MAX_ABSOLUTE_CHANGE_LE_MPE"
+            }
+        },
+        "TARE": {
+            "requirements": {
+                "tare_fraction_of_max_tare_min": "1/3",
+                "tare_fraction_of_max_tare_max": "2/3",
+                "minimum_loading_steps": 5,
+                "minimum_unloading_steps": 5,
+                "net_load_min": "MIN",
+                "net_load_max": "MAX_MINUS_TARE",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "WARMUP": {
+            "requirements": {
+                "power_off_minimum_hours": 8,
+                "observation_times_minutes": [
+                    5,
+                    15,
+                    30
+                ],
+                "test_load_condition": "CLOSE_TO_MAX",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "VOLT": {
+            "requirements": {
+                "nominal_voltage": "230",
+                "minimum_voltage_multiplier": "0.85",
+                "maximum_voltage_multiplier": "1.10",
+                "test_load_multiplier_e": "10",
+                "acceptance": "ABSOLUTE_CORRECTED_ERROR_LE_MPE"
+            }
+        },
+        "SPAN": {
+            "requirements": {
+                "minimum_measurements": 8,
+                "initial_readings": 5,
+                "test_load_condition": "NEAR_MAX",
+                "power_disconnections_minimum": 2,
+                "power_disconnection_minimum_hours": 8,
+                "allowable_variation": "MAX_HALF_E_OR_HALF_MPE"
+            }
+        }
+    }
+}

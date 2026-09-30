@@ -1,0 +1,81 @@
+{
+    "ruleset_version": "R76-1:2006",
+    "prototype_scope": {
+        "instrument_type": "ELECTRONIC",
+        "indication_type": "DIGITAL",
+        "self_indicating": true,
+        "accuracy_class": "III",
+        "single_range": true,
+        "multi_interval": false,
+        "max_capacity": "30",
+        "min_capacity": "0.2",
+        "e": "0.01",
+        "d": "0.01",
+        "platform_type": "CONVENTIONAL",
+        "support_points_max": 4,
+        "tare_type": "SEMI_AUTOMATIC_SUBTRACTIVE",
+        "power_supply": "AC",
+        "nominal_voltage": "230",
+        "mobile": false,
+        "evaluation_mode": "TYPE_EVALUATION"
+    },
+    "tests": {
+        "WP": {
+            "applicable": true
+        },
+        "TEMP_STATIC": {
+            "applicable": true
+        },
+        "TEMP_NO_LOAD": {
+            "applicable": true
+        },
+        "ECC_WEIGHT": {
+            "applicable": true,
+            "conditions": {
+                "platform_type": "CONVENTIONAL",
+                "support_points_max": 4
+            }
+        },
+        "REP": {
+            "applicable": true
+        },
+        "DIS": {
+            "applicable": true,
+            "conditions": {
+                "indication_type": "DIGITAL"
+            }
+        },
+        "ZR": {
+            "applicable": true
+        },
+        "CRP": {
+            "applicable": true
+        },
+        "TARE": {
+            "applicable": true,
+            "conditions": {
+                "tare_type": "SEMI_AUTOMATIC_SUBTRACTIVE"
+            }
+        },
+        "WARMUP": {
+            "applicable": true,
+            "conditions": {
+                "instrument_type": "ELECTRONIC"
+            }
+        },
+        "VOLT": {
+            "applicable": true,
+            "conditions": {
+                "power_supply": "AC"
+            }
+        },
+        "SPAN": {
+            "applicable": true,
+            "conditions": {
+                "accuracy_class_excludes": [
+                    "I"
+                ]
+            }
+        }
+    }
+}

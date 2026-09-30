@@ -1,0 +1,181 @@
+{
+    "ruleset_version": "R76-1:2006",
+    "calculations": {
+        "WP": {
+            "function": "calculate_weighing_performance",
+            "inputs": [
+                "reference_load",
+                "indicated_value",
+                "additional_load",
+                "zero_error"
+            ],
+            "derived_values": [
+                "conventional_true_value",
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "TEMP_STATIC": {
+            "function": "calculate_static_temperatures",
+            "inputs": [
+                "temperature",
+                "reference_load",
+                "indicated_value",
+                "additional_load",
+                "zero_error"
+            ],
+            "derived_values": [
+                "conventional_true_value",
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "TEMP_NO_LOAD": {
+            "function": "calculate_temperature_no_load",
+            "inputs": [
+                "temperature",
+                "zero_indication"
+            ],
+            "derived_values": [
+                "zero_change",
+                "normalized_zero_change",
+                "allowed_zero_change"
+            ]
+        },
+        "ECC_WEIGHT": {
+            "function": "calculate_eccentricity",
+            "inputs": [
+                "position",
+                "reference_load",
+                "indicated_value",
+                "additional_load"
+            ],
+            "derived_values": [
+                "conventional_true_value",
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "REP": {
+            "function": "calculate_repeatability",
+            "inputs": [
+                "series",
+                "reference_load",
+                "indicated_value",
+                "additional_load"
+            ],
+            "derived_values": [
+                "error",
+                "corrected_error",
+                "mpe",
+                "repeatability_range"
+            ]
+        },
+        "DIS": {
+            "function": "calculate_discrimination",
+            "inputs": [
+                "reference_load",
+                "initial_indication",
+                "decreased_indication",
+                "increased_indication"
+            ],
+            "derived_values": [
+                "decrease_response",
+                "increase_response",
+                "required_change",
+                "pass_fail"
+            ]
+        },
+        "ZR": {
+            "function": "calculate_zero_return",
+            "inputs": [
+                "load",
+                "zero_before",
+                "zero_after"
+            ],
+            "derived_values": [
+                "zero_deviation",
+                "allowed_zero_deviation"
+            ]
+        },
+        "CRP": {
+            "function": "calculate_creep",
+            "inputs": [
+                "load",
+                "time_minutes",
+                "indicated_value",
+                "additional_load",
+                "temperature"
+            ],
+            "derived_values": [
+                "conventional_true_value",
+                "indication_change",
+                "mpe"
+            ]
+        },
+        "TARE": {
+            "function": "calculate_tare",
+            "inputs": [
+                "tare_value",
+                "maximum_tare",
+                "loading_measurements",
+                "unloading_measurements"
+            ],
+            "derived_values": [
+                "net_load",
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "WARMUP": {
+            "function": "calculate_warmup",
+            "inputs": [
+                "elapsed_minutes",
+                "reference_load",
+                "indicated_value",
+                "additional_load",
+                "zero_error"
+            ],
+            "derived_values": [
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "VOLT": {
+            "function": "calculate_voltage",
+            "inputs": [
+                "voltage",
+                "reference_load",
+                "indicated_value",
+                "additional_load",
+                "zero_error"
+            ],
+            "derived_values": [
+                "error",
+                "corrected_error",
+                "mpe"
+            ]
+        },
+        "SPAN": {
+            "function": "calculate_span_stability",
+            "inputs": [
+                "load",
+                "initial_readings",
+                "measurements",
+                "power_disconnections"
+            ],
+            "derived_values": [
+                "initial_average_error",
+                "measurement_errors",
+                "mpe",
+                "allowable_variation",
+                "maximum_error_variation"
+            ]
+        }
+    }
+}
