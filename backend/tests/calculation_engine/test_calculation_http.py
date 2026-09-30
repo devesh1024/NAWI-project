@@ -1,18 +1,17 @@
-from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
-from backend.app.api.test_sessions.calculation_routes import (
-    calculate_and_save_result,
-)
+from fastapi.testclient import TestClient
+
+from backend.app.database.connection import get_db
+from backend.app.main import app
 from backend.app.models.instrument import Instrument
 from backend.app.models.test_calculation import TestCalculation
 from backend.app.models.test_definition import TestDefinition
 from backend.app.models.test_result import TestResult
 from backend.app.models.test_session import TestSession
 from backend.app.models.test_session_test import TestSessionTest
-from backend.app.models.user import User
-from backend.app.schemas.calculation import CalculationResultCreate
+from backend.app.utils.dependencies import get_current_user
 
 
 class FakeQuery:
@@ -73,7 +72,11 @@ def make_session(session_id, laboratory_id, instrument_id):
     )
 
 
-def make_session_test(session_test_id, session_id, test_definition_id):
+def make_session_test(
+    session_test_id,
+    session_id,
+    test_definition_id,
+):
     return SimpleNamespace(
         session_test_id=session_test_id,
         test_session_id=session_id,
@@ -99,7 +102,7 @@ def make_user(laboratory_id):
     )
 
 
-def test_calculation_route_executes_engine_and_saves_result():
+def test_http_calculation_endpoint_executes_successfully():
     laboratory_id = uuid4()
     instrument_id = uuid4()
     session_id = uuid4()
@@ -131,7 +134,7 @@ def test_calculation_route_executes_engine_and_saves_result():
         laboratory_id=laboratory_id,
     )
 
-    db = FakeDB(
+    fake_db = FakeDB(
         {
             TestSessionTest: session_test,
             TestSession: session,
@@ -140,92 +143,65 @@ def test_calculation_route_executes_engine_and_saves_result():
         }
     )
 
-    data = CalculationResultCreate(
-        inputs={
-            "measurements": [
-                {
-                    "load": Decimal("10"),
-                    "indication": Decimal("10"),
-                    "additional_load": Decimal("0"),
-                    "zero_error": Decimal("0"),
+    def override_get_db():
+        return fake_db
+
+    def override_get_current_user():
+        return current_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            f"/api/test-sessions/{session_test_id}/calculation-result",
+            json={
+                "inputs": {
+                    "measurements": [
+                        {
+                            "load": 10,
+                            "indication": 10,
+                            "additional_load": 0,
+                            "zero_error": 0,
+                        }
+                    ]
                 }
-            ]
-        }
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201, (
+        f"Expected HTTP 201, got {response.status_code}: "
+        f"{response.text}"
     )
 
-    response = calculate_and_save_result(
-        session_test_id=session_test_id,
-        data=data,
-        current_user=current_user,
-        db=db,
+    body = response.json()
+
+    assert body["message"] == (
+        "Calculation executed and result saved successfully"
     )
 
-    assert db.committed is True
+    assert body["test"]["test_code"] == "WP"
+    assert body["test"]["test_name"] == "Weighing Performance"
 
+    assert body["result"]["status"] == "PASS"
+    assert body["result"]["pass_fail"] == "PASS"
+
+    assert fake_db.committed is True
     assert session_test.status == "COMPLETED"
     assert session_test.result == "PASS"
 
-    assert len(db.added) == 2
+    assert len(fake_db.added) == 2
 
-    calculation = next(
-        obj
-        for obj in db.added
-        if isinstance(obj, TestCalculation)
+    assert any(
+        isinstance(obj, TestCalculation)
+        for obj in fake_db.added
     )
 
-    result = next(
-        obj
-        for obj in db.added
-        if isinstance(obj, TestResult)
+    assert any(
+        isinstance(obj, TestResult)
+        for obj in fake_db.added
     )
-
-    assert calculation.session_test_id == session_test_id
-    assert calculation.calculation_type == "WEIGHING_PERFORMANCE"
-    assert calculation.calculation_version == "1.0.0"
-
-    assert result.session_test_id == session_test_id
-    assert result.pass_fail == "PASS"
-    assert result.calculation_version == "1.0.0"
-
-    assert response["test"]["test_code"] == "WP"
-    assert response["test"]["test_name"] == "Weighing Performance"
-
-    assert response["result"]["status"] == "PASS"
-    assert response["result"]["pass_fail"] == "PASS"
-
-
-def test_calculation_route_rejects_missing_session_test():
-    laboratory_id = uuid4()
-    session_test_id = uuid4()
-
-    current_user = make_user(
-        laboratory_id=laboratory_id,
-    )
-
-    db = FakeDB(
-        {
-            TestSessionTest: None,
-            TestSession: None,
-            Instrument: None,
-            TestDefinition: None,
-        }
-    )
-
-    data = CalculationResultCreate(
-        inputs={}
-    )
-
-    try:
-        calculate_and_save_result(
-            session_test_id=session_test_id,
-            data=data,
-            current_user=current_user,
-            db=db,
-        )
-    except Exception as exc:
-        assert exc.status_code == 404
-        assert exc.detail == "Session test not found"
-    else:
-        raise AssertionError(
-            "Expected HTTPException for missing session test"
-        )

@@ -2,12 +2,12 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.context import (
+from backend.app.services.calculation_engine.context import (
     EvaluationContext,
     InstrumentContext,
     RuleSet,
 )
-from app.services.calculation_engine.discrimination import (
+from backend.app.services.calculation_engine.discrimination import (
     calculate_discrimination,
 )
 

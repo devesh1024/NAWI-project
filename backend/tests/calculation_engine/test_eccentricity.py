@@ -2,12 +2,12 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.context import (
+from backend.app.services.calculation_engine.context import (
     EvaluationContext,
     InstrumentContext,
     RuleSet,
 )
-from app.services.calculation_engine.eccentricity import (
+from backend.app.services.calculation_engine.eccentricity import (
     calculate_eccentricity,
 )
 

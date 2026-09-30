@@ -17,8 +17,6 @@ from backend.app.models.test_session_test import TestSessionTest
 from backend.app.models.user import User
 from backend.app.schemas.calculation import (
     CalculationResultCreate,
-    CalculationResponse,
-    ResultResponse,
 )
 from backend.app.services.calculation_engine.context import EvaluationContext
 from backend.app.services.calculation_engine.engine import CalculationRequest
@@ -37,11 +35,58 @@ router = APIRouter(
 )
 
 
+def _to_decimal(value: Any) -> Any:
+    """
+    Convert numeric values at the HTTP/API boundary to Decimal.
+
+    The calculation engine intentionally works with Decimal for
+    metrological calculations. JSON itself has no Decimal type, so
+    values arriving through the API must be normalized before the
+    engine receives them.
+    """
+
+    if isinstance(value, Decimal):
+        return value
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+
+    if isinstance(value, str):
+        try:
+            return Decimal(value)
+        except Exception:
+            return value
+
+    if isinstance(value, dict):
+        return {
+            key: _to_decimal(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            _to_decimal(item)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
+        return tuple(
+            _to_decimal(item)
+            for item in value
+        )
+
+    return value
+
+
 def _json_safe(value: Any) -> Any:
     """
-    Convert calculation inputs/details into values that can safely
-    be stored in a PostgreSQL JSON column.
+    Convert Decimal/UUID values into JSON-compatible values for
+    database JSON fields and API responses.
     """
+
     if isinstance(value, Decimal):
         return str(value)
 
@@ -55,15 +100,15 @@ def _json_safe(value: Any) -> Any:
         }
 
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        return [
+            _json_safe(item)
+            for item in value
+        ]
 
     return value
 
 
 def _result_to_float(value: Any) -> float | None:
-    """
-    Convert Decimal/numeric result values to a database-compatible float.
-    """
     if value is None:
         return None
 
@@ -84,24 +129,6 @@ def calculate_and_save_result(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Execute an R76 calculation for a session test and persist the result.
-
-    The client supplies only raw calculation inputs.
-
-    The backend determines:
-        - test code
-        - instrument configuration
-        - applicable R76 rules
-        - MPE
-        - error
-        - acceptance
-        - PASS/FAIL/N/A
-    """
-
-    # ---------------------------------------------------------
-    # 1. Find the session-test
-    # ---------------------------------------------------------
     session_test = (
         db.query(TestSessionTest)
         .filter(
@@ -116,9 +143,6 @@ def calculate_and_save_result(
             detail="Session test not found",
         )
 
-    # ---------------------------------------------------------
-    # 2. Find the parent test session
-    # ---------------------------------------------------------
     session = (
         db.query(TestSession)
         .filter(
@@ -134,9 +158,6 @@ def calculate_and_save_result(
             detail="Test session not found",
         )
 
-    # ---------------------------------------------------------
-    # 3. Find the instrument used by the session
-    # ---------------------------------------------------------
     instrument = (
         db.query(Instrument)
         .filter(
@@ -152,9 +173,6 @@ def calculate_and_save_result(
             detail="Instrument not found",
         )
 
-    # ---------------------------------------------------------
-    # 4. Find the test definition
-    # ---------------------------------------------------------
     test_definition = (
         db.query(TestDefinition)
         .filter(
@@ -173,9 +191,6 @@ def calculate_and_save_result(
 
     test_code = test_definition.test_code
 
-    # ---------------------------------------------------------
-    # 5. Convert database instrument → calculation context
-    # ---------------------------------------------------------
     try:
         instrument_context = instrument_to_context(instrument)
     except (ValueError, TypeError) as exc:
@@ -184,17 +199,11 @@ def calculate_and_save_result(
             detail=f"Invalid instrument configuration: {exc}",
         ) from exc
 
-    # ---------------------------------------------------------
-    # 6. Create evaluation context
-    # ---------------------------------------------------------
     evaluation = EvaluationContext(
         mode="TYPE_EVALUATION",
         mpe_basis="INITIAL_VERIFICATION",
     )
 
-    # ---------------------------------------------------------
-    # 7. Create the R76 calculation engine
-    # ---------------------------------------------------------
     try:
         engine = create_r76_calculation_engine(
             instrument=instrument_context,
@@ -206,13 +215,12 @@ def calculate_and_save_result(
             detail=f"Unable to initialize R76 calculation engine: {exc}",
         ) from exc
 
-    # ---------------------------------------------------------
-    # 8. Execute the calculation
-    # ---------------------------------------------------------
     try:
+        calculation_inputs = _to_decimal(data.inputs)
+
         calculation_request = CalculationRequest(
             test_code=test_code,
-            inputs=data.inputs,
+            inputs=calculation_inputs,
         )
 
         result = engine.calculate(
@@ -225,26 +233,27 @@ def calculate_and_save_result(
             detail=f"Calculation input validation failed: {exc}",
         ) from exc
 
-    # ---------------------------------------------------------
-    # 9. Prepare database-safe values
-    # ---------------------------------------------------------
-    input_values = _json_safe(data.inputs)
+    input_values = _json_safe(calculation_inputs)
     result_details = _json_safe(result.details)
 
-    measured_value = _result_to_float(result.measured_value)
-    mpe_value = _result_to_float(result.limit)
-    error_value = _result_to_float(result.error)
+    measured_value = _result_to_float(
+        result.measured_value
+    )
 
-    # The calculation engine currently exposes a single error field.
-    # Do not invent a separate corrected-error value unless the
-    # calculation result explicitly provides one.
+    mpe_value = _result_to_float(
+        result.limit
+    )
+
+    error_value = _result_to_float(
+        result.error
+    )
+
+    # Not every R76 test produces one single corrected-error value.
+    # Therefore we do not invent one here.
     corrected_error = None
 
     calculation_version = evaluation.calculation_version
 
-    # ---------------------------------------------------------
-    # 10. Store calculation
-    # ---------------------------------------------------------
     calculation = TestCalculation(
         session_test_id=session_test_id,
         calculation_type=(
@@ -260,9 +269,6 @@ def calculate_and_save_result(
 
     db.add(calculation)
 
-    # ---------------------------------------------------------
-    # 11. Store test result
-    # ---------------------------------------------------------
     result_record = TestResult(
         session_test_id=session_test_id,
         measured_value=measured_value,
@@ -277,15 +283,9 @@ def calculate_and_save_result(
 
     db.add(result_record)
 
-    # ---------------------------------------------------------
-    # 12. Update session-test status
-    # ---------------------------------------------------------
     session_test.result = result.status
     session_test.status = "COMPLETED"
 
-    # ---------------------------------------------------------
-    # 13. Commit everything atomically
-    # ---------------------------------------------------------
     try:
         db.commit()
     except Exception:
@@ -295,9 +295,6 @@ def calculate_and_save_result(
     db.refresh(calculation)
     db.refresh(result_record)
 
-    # ---------------------------------------------------------
-    # 14. Return calculation + result
-    # ---------------------------------------------------------
     return {
         "message": "Calculation executed and result saved successfully",
         "test": {
@@ -305,25 +302,37 @@ def calculate_and_save_result(
             "test_name": test_definition.test_name,
         },
         "calculation": {
-            "calculation_id": str(calculation.calculation_id),
-            "session_test_id": str(calculation.session_test_id),
+            "calculation_id": str(
+                calculation.calculation_id
+            ),
+            "session_test_id": str(
+                calculation.session_test_id
+            ),
             "calculation_type": calculation.calculation_type,
             "calculated_value": calculation.calculated_value,
             "unit": calculation.unit,
             "calculation_version": calculation.calculation_version,
         },
         "result": {
-            "result_id": str(result_record.result_id),
-            "session_test_id": str(result_record.session_test_id),
+            "result_id": str(
+                result_record.result_id
+            ),
+            "session_test_id": str(
+                result_record.session_test_id
+            ),
             "status": result.status,
             "measured_value": result_record.measured_value,
             "mpe_value": result_record.mpe_value,
             "error_value": result_record.error_value,
             "corrected_error": result_record.corrected_error,
-            "acceptance_condition": result_record.acceptance_condition,
+            "acceptance_condition": (
+                result_record.acceptance_condition
+            ),
             "pass_fail": result_record.pass_fail,
             "result_summary": result_record.result_summary,
-            "calculation_version": result_record.calculation_version,
+            "calculation_version": (
+                result_record.calculation_version
+            ),
             "details": result_details,
         },
     }
