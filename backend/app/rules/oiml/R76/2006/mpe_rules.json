@@ -1,0 +1,46 @@
+{
+    "initial_verification": {
+        "I": [
+            {
+                "rule_id": "MPE_I_001",
+                "min_e": 0,
+                "max_e": 500,
+                "mpe_multiplier_e": "0.5"
+            },
+            {
+                "rule_id": "MPE_I_002",
+                "min_e": 500,
+                "max_e": 2000,
+                "mpe_multiplier_e": "1.0"
+            },
+            {
+                "rule_id": "MPE_I_003",
+                "min_e": 2000,
+                "max_e": 10000,
+                "mpe_multiplier_e": "1.5"
+            }
+        ],
+        "II": [],
+        "III": [
+            {
+                "rule_id": "MPE_III_001",
+                "min_e": 0,
+                "max_e": 500,
+                "mpe_multiplier_e": "0.5"
+            },
+            {
+                "rule_id": "MPE_III_002",
+                "min_e": 500,
+                "max_e": 2000,
+                "mpe_multiplier_e": "1.0"
+            },
+            {
+                "rule_id": "MPE_III_003",
+                "min_e": 2000,
+                "max_e": 10000,
+                "mpe_multiplier_e": "1.5"
+            }
+        ],
+        "IIII": []
+    }
+}
