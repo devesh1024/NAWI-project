@@ -1,1596 +1,1458 @@
-"""
-NAWI Test Report generator.
 
-Consumes the `data` dictionary exactly as returned by the
-`/api/test-sessions/{id}/report-data` endpoint and produces a
-formatted, print-ready DOCX laboratory test report.
+"""
+NAWI Test Report DOCX generator.
+
+Consumes the same structured report-data dictionary used by the NAWI PDF
+generator and produces a print-ready Word (.docx) report with the same
+visual structure, section order, data fields, status treatment, and
+report conventions.
+
+The generator is a presentation layer only. It does not calculate OIML
+measurement results.
 """
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.section import WD_ORIENT
-from docx.oxml.ns import qn
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
-from docx.shared import Emu
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 
-from .sample_report_data import sample_report_data
 
+# ============================================================
+# THEME - matches the finalized PDF generator
+# ============================================================
 
-# ---------------------------------------------------------------------------
-# Layout / style constants
-# ---------------------------------------------------------------------------
+BURGUNDY = "6B2D2D"
+BURGUNDY_DARK = "4B2020"
+BURGUNDY_LIGHT = "F4EAEA"
+CHARCOAL = "2E2E2E"
+TEXT = "252525"
+MUTED = "666666"
+BORDER = "B7B0B0"
+ROW_ALT = "FAF7F7"
+WHITE = "FFFFFF"
+GREEN = "2F6B3A"
+RED = "9B3030"
+GREY = "6E6E6E"
 
 FONT_NAME = "Calibri"
-BODY_SIZE = Pt(10)
+BODY_SIZE = Pt(9.5)
 
-PAGE_MARGIN = Inches(0.8)
 PAGE_WIDTH = Inches(8.27)
+PAGE_HEIGHT = Inches(11.69)
+PAGE_MARGIN = Inches(0.78)
+HEADER_DISTANCE = Inches(0.34)
+FOOTER_DISTANCE = Inches(0.34)
+
 USABLE_WIDTH = PAGE_WIDTH - (PAGE_MARGIN * 2)
 
-ACCENT_HEX = "2F5496"
-LABEL_SHADE_HEX = "EDF1F7"
-BORDER_HEX = "A6ACB4"
-
-PASS_COLOR = RGBColor(0x1E, 0x7B, 0x34)
-FAIL_COLOR = RGBColor(0xC0, 0x00, 0x00)
-NEUTRAL_COLOR = RGBColor(0x22, 0x22, 0x22)
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+IST = timezone(timedelta(hours=5, minutes=30), name="IST")
+UTC = timezone.utc
 
 
-# ---------------------------------------------------------------------------
-# Low-level XML helpers
-# ---------------------------------------------------------------------------
+# ============================================================
+# DATA HELPERS
+# ============================================================
 
-def _set_cell_background(cell, hex_color):
-    tcPr = cell._tc.get_or_add_tcPr()
+def safe(value: Any, default: str = "Not recorded") -> str:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    text = str(value).strip()
+    return text if text else default
 
-    shd = OxmlElement("w:shd")
+
+def optional(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def first_present(*values: Any, default: Any = None) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return default
+
+
+def format_value(value: Any) -> str:
+    if value is None:
+        return "Not recorded"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else f"{value:g}"
+    return str(value)
+
+
+def parse_datetime(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date):
+        dt = datetime(value.year, value.month, value.day)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M",
+                "%d-%m-%Y %H:%M:%S",
+                "%d-%m-%Y %H:%M",
+            ):
+                try:
+                    dt = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return None
+    else:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+
+    return dt.astimezone(IST)
+
+
+def format_datetime(value: Any, include_time: bool = True) -> str:
+    dt = parse_datetime(value)
+    if dt is None:
+        return "Not recorded"
+    return dt.strftime("%d-%m-%Y %H:%M IST" if include_time else "%d-%m-%Y")
+
+
+def display_timestamp(value: Any) -> str:
+    return format_datetime(value, include_time=True)
+
+
+def get_tester_name(tester: dict) -> str:
+    name = first_present(tester.get("name"), tester.get("full_name"))
+    if name:
+        return str(name)
+    full = " ".join(
+        part for part in
+        (tester.get("first_name") or "", tester.get("last_name") or "")
+        if part
+    ).strip()
+    return full or "Not recorded"
+
+
+def get_reviewer_name(report: dict) -> str:
+    reviewer = report.get("reviewer") or {}
+    name = first_present(
+        reviewer.get("name"),
+        report.get("reviewer_name"),
+        report.get("approved_by_name"),
+    )
+    if name:
+        return str(name)
+    full = " ".join(
+        part for part in
+        (reviewer.get("first_name") or "", reviewer.get("last_name") or "")
+        if part
+    ).strip()
+    return full or "Not recorded"
+
+
+def get_test_result(test: dict) -> str:
+    detailed = test.get("results") or []
+    detailed_result = (
+        detailed[0] if detailed and isinstance(detailed[0], dict) else {}
+    )
+    value = first_present(
+        test.get("result"),
+        test.get("pass_fail"),
+        detailed_result.get("pass_fail"),
+        default="Not recorded",
+    )
+    return str(value)
+
+
+def get_test_applicability(test: dict) -> str:
+    return str(first_present(
+        test.get("applicability_status"),
+        test.get("applicability"),
+        default="Not recorded",
+    ))
+
+
+# ============================================================
+# OOXML / FORMATTING HELPERS
+# ============================================================
+
+def _set_cell_shading(cell, fill: str) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = tc_pr.find(qn("w:shd"))
+    if shd is None:
+        shd = OxmlElement("w:shd")
+        tc_pr.append(shd)
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), hex_color)
-
-    tcPr.append(shd)
+    shd.set(qn("w:fill"), fill)
 
 
-def _set_cell_borders(cell, hex_color=BORDER_HEX, size=4):
-    tcPr = cell._tc.get_or_add_tcPr()
-
-    borders = OxmlElement("w:tcBorders")
+def _set_cell_borders(cell, color: str = BORDER, size: int = 4) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
 
     for edge in ("top", "left", "bottom", "right"):
-        el = OxmlElement(f"w:{edge}")
+        tag = qn(f"w:{edge}")
+        el = borders.find(tag)
+        if el is None:
+            el = OxmlElement(f"w:{edge}")
+            borders.append(el)
         el.set(qn("w:val"), "single")
         el.set(qn("w:sz"), str(size))
         el.set(qn("w:space"), "0")
-        el.set(qn("w:color"), hex_color)
-
-        borders.append(el)
-
-    tcPr.append(borders)
+        el.set(qn("w:color"), color)
 
 
-def _set_repeat_header(row):
-    trPr = row._tr.get_or_add_trPr()
-
-    header = OxmlElement("w:tblHeader")
+def _set_repeat_header(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    header = tr_pr.find(qn("w:tblHeader"))
+    if header is None:
+        header = OxmlElement("w:tblHeader")
+        tr_pr.append(header)
     header.set(qn("w:val"), "true")
 
-    trPr.append(header)
+
+def _prevent_row_split(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    if tr_pr.find(qn("w:cantSplit")) is None:
+        tr_pr.append(OxmlElement("w:cantSplit"))
 
 
-def _prevent_row_split(row):
-    trPr = row._tr.get_or_add_trPr()
-
-    cant_split = OxmlElement("w:cantSplit")
-
-    trPr.append(cant_split)
-
-
-def _set_fixed_layout(table):
-    tblPr = table._tbl.tblPr
-
-    layout = OxmlElement("w:tblLayout")
+def _set_fixed_layout(table) -> None:
+    tbl_pr = table._tbl.tblPr
+    layout = tbl_pr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
     layout.set(qn("w:type"), "fixed")
 
-    tblPr.append(layout)
 
-
-def _set_column_widths(table, widths):
-    """Apply explicit widths to the table grid and every cell."""
-
-    widths = [Emu(int(w)) for w in widths]
-
+def _set_column_widths(table, widths) -> None:
     table.autofit = False
-
     _set_fixed_layout(table)
-
     for row in table.rows:
         for cell, width in zip(row.cells, widths):
             cell.width = width
 
-    for idx, width in enumerate(widths):
-        table.columns[idx].width = width
+
+def _set_paragraph_spacing(paragraph, before=0, after=0, line=1.0) -> None:
+    fmt = paragraph.paragraph_format
+    fmt.space_before = Pt(before)
+    fmt.space_after = Pt(after)
+    fmt.line_spacing = line
 
 
-def _add_field(run_container, label, value, bold_label=True):
-    p = run_container.add_paragraph()
-
-    label_run = p.add_run(f"{label}: ")
-
-    label_run.bold = bold_label
-    label_run.font.name = FONT_NAME
-    label_run.font.size = BODY_SIZE
-
-    value_run = p.add_run(
-        "" if value is None else str(value)
-    )
-
-    value_run.font.name = FONT_NAME
-    value_run.font.size = BODY_SIZE
-
-    return p
+def _set_run(run, *, bold=False, italic=False, color=TEXT, size=BODY_SIZE) -> None:
+    run.font.name = FONT_NAME
+    run.font.size = size
+    run.bold = bold
+    run.italic = italic
+    run.font.color.rgb = RGBColor.from_string(color)
 
 
 def _set_cell_text(
     cell,
-    text,
+    text: Any,
+    *,
     bold=False,
-    color=None,
+    italic=False,
+    color=TEXT,
     size=BODY_SIZE,
     align=WD_ALIGN_PARAGRAPH.LEFT,
-    vcenter=True
-):
+) -> None:
     cell.text = ""
-
     p = cell.paragraphs[0]
     p.alignment = align
-
-    run = p.add_run(
-        "" if text is None else str(text)
-    )
-
-    run.bold = bold
-    run.font.name = FONT_NAME
-    run.font.size = size
-
-    if color is not None:
-        run.font.color.rgb = color
-
-    if vcenter:
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-
-    return run
+    _set_paragraph_spacing(p, after=0, line=1.0)
+    run = p.add_run(safe(text, ""))
+    _set_run(run, bold=bold, italic=italic, color=color, size=size)
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
-def _status_color(value):
-    v = str(value).strip().upper() if value else ""
-
-    if v == "PASS":
-        return PASS_COLOR
-
-    if v == "FAIL":
-        return FAIL_COLOR
-
-    return NEUTRAL_COLOR
+def _status_color(value: Any) -> str:
+    text = str(value).strip().upper() if value is not None else ""
+    if text == "PASS":
+        return GREEN
+    if text == "FAIL":
+        return RED
+    return CHARCOAL
 
 
-def _add_page_number_footer(section):
-    footer = section.footer
-    p = footer.paragraphs[0]
+def _style_heading(paragraph, *, size=Pt(11.5), color=BURGUNDY, before=6, after=4) -> None:
+    paragraph.paragraph_format.keep_with_next = True
+    _set_paragraph_spacing(paragraph, before=before, after=after, line=1.0)
+    for run in paragraph.runs:
+        _set_run(run, bold=True, color=color, size=size)
 
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.text = ""
 
-    run = p.add_run("Page ")
+def _add_page_field(paragraph, instruction: str) -> None:
+    run = paragraph.add_run()
+    _set_run(run, color=MUTED, size=Pt(8))
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = instruction
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_begin)
+    run._r.append(instr)
+    run._r.append(fld_sep)
+    run._r.append(fld_end)
 
-    run.font.name = FONT_NAME
-    run.font.size = Pt(8.5)
 
-    def _field(paragraph, code, run_font_setup):
-        r = paragraph.add_run()
-        run_font_setup(r)
+# ============================================================
+# TABLE BUILDERS
+# ============================================================
 
-        fld_begin = OxmlElement("w:fldChar")
-        fld_begin.set(
-            qn("w:fldCharType"),
-            "begin"
+def _add_kv_table(document, pairs, *, label_width=Inches(1.72)):
+    table = document.add_table(rows=len(pairs), cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    value_width = USABLE_WIDTH - label_width
+    _set_column_widths(table, [label_width, value_width])
+
+    for idx, (label, value) in enumerate(pairs):
+        row = table.rows[idx]
+        _set_cell_text(row.cells[0], label, bold=True, size=Pt(8.5))
+        _set_cell_shading(row.cells[0], BURGUNDY_LIGHT)
+        _set_cell_text(row.cells[1], value, size=Pt(8.5))
+        for cell in row.cells:
+            _set_cell_borders(cell)
+        _prevent_row_split(row)
+
+    return table
+
+
+def _add_four_cell_table(document, rows_data, widths, *, header=True, row_alt=True):
+    table = document.add_table(rows=0, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, widths)
+
+    if header:
+        row = table.add_row()
+        headers = rows_data.pop(0)
+        for i, value in enumerate(headers):
+            _set_cell_text(
+                row.cells[i], value, bold=True, color=WHITE,
+                size=Pt(7.8), align=WD_ALIGN_PARAGRAPH.CENTER,
+            )
+            _set_cell_shading(row.cells[i], BURGUNDY)
+            _set_cell_borders(row.cells[i])
+        _set_repeat_header(row)
+
+    for idx, values in enumerate(rows_data):
+        row = table.add_row()
+        for i, value in enumerate(values):
+            _set_cell_text(
+                row.cells[i],
+                value,
+                bold=(i in (0, 2)),
+                size=Pt(8.2),
+            )
+            if i in (0, 2):
+                _set_cell_shading(row.cells[i], BURGUNDY_LIGHT)
+            elif row_alt and idx % 2 == 1:
+                _set_cell_shading(row.cells[i], ROW_ALT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
+
+    return table
+
+
+def _add_header_table(document, headers, rows_data, widths, align_cols=None):
+    table = document.add_table(rows=1, cols=len(headers))
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, widths)
+
+    for i, header in enumerate(headers):
+        _set_cell_text(
+            table.rows[0].cells[i],
+            header,
+            bold=True,
+            color=WHITE,
+            size=Pt(7.6),
+            align=WD_ALIGN_PARAGRAPH.CENTER,
         )
+        _set_cell_shading(table.rows[0].cells[i], BURGUNDY)
+        _set_cell_borders(table.rows[0].cells[i])
+    _set_repeat_header(table.rows[0])
 
-        instr = OxmlElement("w:instrText")
-        instr.set(
-            qn("xml:space"),
-            "preserve"
-        )
-        instr.text = code
+    for r_idx, row_values in enumerate(rows_data):
+        row = table.add_row()
+        for i, value in enumerate(row_values):
+            align = (
+                align_cols[i]
+                if align_cols and i < len(align_cols)
+                else WD_ALIGN_PARAGRAPH.LEFT
+            )
+            color = None
+            bold = False
+            if isinstance(value, tuple):
+                value, color, bold = value
+            _set_cell_text(
+                row.cells[i],
+                value,
+                bold=bold,
+                color=color or TEXT,
+                size=Pt(8.1),
+                align=align,
+            )
+            if r_idx % 2 == 1:
+                _set_cell_shading(row.cells[i], ROW_ALT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
 
-        fld_sep = OxmlElement("w:fldChar")
-        fld_sep.set(
-            qn("w:fldCharType"),
-            "separate"
-        )
-
-        fld_end = OxmlElement("w:fldChar")
-        fld_end.set(
-            qn("w:fldCharType"),
-            "end"
-        )
-
-        r._r.append(fld_begin)
-
-        r2 = paragraph.add_run()
-        run_font_setup(r2)
-        r2._r.append(instr)
-
-        r3 = paragraph.add_run()
-        run_font_setup(r3)
-        r3._r.append(fld_sep)
-
-        r4 = paragraph.add_run()
-        run_font_setup(r4)
-        r4._r.append(fld_end)
-
-    def _setup(r):
-        r.font.name = FONT_NAME
-        r.font.size = Pt(8.5)
-
-    _field(
-        p,
-        "PAGE",
-        _setup
-    )
-
-    mid = p.add_run(" of ")
-
-    mid.font.name = FONT_NAME
-    mid.font.size = Pt(8.5)
-
-    _field(
-        p,
-        "NUMPAGES",
-        _setup
-    )
+    return table
 
 
-def _add_header(section, laboratory_name, session_number):
+# ============================================================
+# HEADER / FOOTER
+# ============================================================
+
+def _add_page_header_footer(section, data) -> None:
+    lab = data.get("laboratory") or {}
+    session = data.get("test_session") or {}
+    report = data.get("report") or {}
+
+    lab_name = safe(lab.get("name"), "Testing Laboratory")
+    report_number = first_present(report.get("report_number"), "Not recorded")
+    application_number = first_present(session.get("application_number"), "Not recorded")
+
+    # Header
     header = section.header
     p = header.paragraphs[0]
     p.text = ""
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    _set_paragraph_spacing(p, after=0)
 
-    left = p.add_run(
-        f"{laboratory_name} — NAWI Test Report"
-    )
+    left = p.add_run("NAWI TEST REPORT")
+    _set_run(left, bold=True, color=BURGUNDY, size=Pt(7.4))
+    p.add_run("    ")
+    centerish = p.add_run(f"{lab_name} | {safe(report_number)} | {safe(application_number)}")
+    _set_run(centerish, color=MUTED, size=Pt(7.2))
 
-    left.font.name = FONT_NAME
-    left.font.size = Pt(8.5)
-    left.font.color.rgb = RGBColor(
-        0x55,
-        0x55,
-        0x55
-    )
-
-    p.add_run("\t\t")
-
-    right = p.add_run(
-        f"Session: {session_number}"
-    )
-
-    right.font.name = FONT_NAME
-    right.font.size = Pt(8.5)
-    right.font.color.rgb = RGBColor(
-        0x55,
-        0x55,
-        0x55
-    )
-
-    pPr = p._p.get_or_add_pPr()
-
-    tabs = OxmlElement("w:tabs")
-
-    tab_el = OxmlElement("w:tab")
-    tab_el.set(
-        qn("w:val"),
-        "right"
-    )
-    tab_el.set(
-        qn("w:pos"),
-        str(int(USABLE_WIDTH))
-    )
-
-    tabs.append(tab_el)
-    pPr.append(tabs)
-
-    pBdr = OxmlElement("w:pBdr")
-
+    p_pr = p._p.get_or_add_pPr()
+    p_bdr = OxmlElement("w:pBdr")
     bottom = OxmlElement("w:bottom")
-    bottom.set(
-        qn("w:val"),
-        "single"
-    )
-    bottom.set(
-        qn("w:sz"),
-        "6"
-    )
-    bottom.set(
-        qn("w:space"),
-        "4"
-    )
-    bottom.set(
-        qn("w:color"),
-        BORDER_HEX
-    )
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "6")
+    bottom.set(qn("w:space"), "3")
+    bottom.set(qn("w:color"), BORDER)
+    p_bdr.append(bottom)
+    p_pr.append(p_bdr)
 
-    pBdr.append(bottom)
-    pPr.append(pBdr)
+    # Footer
+    footer = section.footer
+    fp = footer.paragraphs[0]
+    fp.text = ""
+    _set_paragraph_spacing(fp, before=0, after=0)
+
+    left = fp.add_run("Controlled report copy")
+    _set_run(left, color=MUTED, size=Pt(7.4))
+
+    tab_p = fp.paragraph_format
+    tab_stops = tab_p.tab_stops
+    tab_stops.add_tab_stop(int(USABLE_WIDTH / 2))
+    tab_stops.add_tab_stop(int(USABLE_WIDTH))
+
+    mid = fp.add_run("\tPage ")
+    _set_run(mid, color=MUTED, size=Pt(7.4))
+    _add_page_field(fp, "PAGE")
+
+    of_run = fp.add_run(" of ")
+    _set_run(of_run, color=MUTED, size=Pt(7.4))
+    _add_page_field(fp, "NUMPAGES")
+
+    right = fp.add_run("\tNAWI Test & Compliance System")
+    _set_run(right, color=MUTED, size=Pt(7.4))
+
+    p_pr = fp._p.get_or_add_pPr()
+    p_bdr = OxmlElement("w:pBdr")
+    top = OxmlElement("w:top")
+    top.set(qn("w:val"), "single")
+    top.set(qn("w:sz"), "6")
+    top.set(qn("w:space"), "3")
+    top.set(qn("w:color"), BORDER)
+    p_bdr.append(top)
+    p_pr.append(p_bdr)
 
 
-def _add_horizontal_rule(
-    document,
-    color=ACCENT_HEX,
-    size=18
-):
+# ============================================================
+# SECTION BUILDERS
+# ============================================================
+
+def _build_report_header(document, data):
+    lab = data.get("laboratory") or {}
+    standard = data.get("standard") or {}
+    report = data.get("report") or {}
+    session = data.get("test_session") or {}
+    instrument = data.get("instrument") or {}
+
+    masthead = document.add_table(rows=1, cols=2)
+    masthead.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(masthead, [Inches(1.35), USABLE_WIDTH - Inches(1.35)])
+
+    logo_cell, org_cell = masthead.rows[0].cells
+    _set_cell_text(
+        logo_cell,
+        "LOGO\nReserved for official logo",
+        bold=True,
+        size=Pt(8),
+        align=WD_ALIGN_PARAGRAPH.CENTER,
+    )
+    _set_cell_borders(logo_cell, size=6)
+    logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+    org_cell.text = ""
+    p = org_cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(safe(lab.get("name"), "TESTING LABORATORY"))
+    _set_run(r, bold=True, color=CHARCOAL, size=Pt(12))
+
+    p2 = org_cell.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_paragraph_spacing(p2, after=0)
+    r2 = p2.add_run(safe(lab.get("address")))
+    _set_run(r2, color=MUTED, size=Pt(8))
+
+    loc = " / ".join(
+        str(v) for v in
+        (lab.get("city"), lab.get("state"), lab.get("pincode"))
+        if v
+    )
+    if loc:
+        p3 = org_cell.add_paragraph()
+        p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _set_paragraph_spacing(p3, after=0)
+        _set_run(p3.add_run(loc), color=MUTED, size=Pt(7.7))
+
+    contact = " | ".join(str(v) for v in (lab.get("phone"), lab.get("email")) if v)
+    if contact:
+        p4 = org_cell.add_paragraph()
+        p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _set_paragraph_spacing(p4, after=0)
+        _set_run(p4.add_run(contact), color=MUTED, size=Pt(7.4))
+
+    _set_cell_borders(org_cell, size=6)
+
     p = document.add_paragraph()
-
-    p.paragraph_format.space_after = Pt(10)
-
-    pPr = p._p.get_or_add_pPr()
-
-    pBdr = OxmlElement("w:pBdr")
-
-    bottom = OxmlElement("w:bottom")
-    bottom.set(
-        qn("w:val"),
-        "single"
-    )
-    bottom.set(
-        qn("w:sz"),
-        str(size)
-    )
-    bottom.set(
-        qn("w:space"),
-        "1"
-    )
-    bottom.set(
-        qn("w:color"),
-        color
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_paragraph_spacing(p, before=5, after=0)
+    _set_run(
+        p.add_run("NON-AUTOMATIC WEIGHING INSTRUMENTS"),
+        bold=True, color=MUTED, size=Pt(8.5),
     )
 
-    pBdr.append(bottom)
-    pPr.append(pBdr)
-
-
-def _style_heading(
-    paragraph,
-    keep_with_next=True
-):
-    paragraph.paragraph_format.keep_with_next = (
-        keep_with_next
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_paragraph_spacing(p, after=1)
+    _set_run(
+        p.add_run("NAWI TEST REPORT"),
+        bold=True, color=BURGUNDY_DARK, size=Pt(18),
     )
 
-    for run in paragraph.runs:
-        run.font.name = FONT_NAME
-
-
-def _apply_base_styles(document):
-    normal = document.styles["Normal"]
-
-    normal.font.name = FONT_NAME
-    normal.font.size = BODY_SIZE
-    normal.font.color.rgb = NEUTRAL_COLOR
-
-    normal.paragraph_format.space_after = Pt(4)
-
-    for level, size, color in (
-        ("Title", 22, ACCENT_HEX),
-        ("Heading 1", 13, ACCENT_HEX),
-        ("Heading 2", 11.5, "1A1A1A"),
-        ("Heading 3", 10.5, "1A1A1A"),
-    ):
-        style = document.styles[level]
-
-        style.font.name = FONT_NAME
-        style.font.size = Pt(size)
-        style.font.color.rgb = RGBColor.from_string(
-            color
-        )
-        style.font.bold = True
-
-        style.paragraph_format.space_before = (
-            Pt(10)
-            if level != "Title"
-            else Pt(0)
-        )
-
-        style.paragraph_format.space_after = Pt(6)
-
-
-# ---------------------------------------------------------------------------
-# Reusable table builders
-# ---------------------------------------------------------------------------
-
-def _add_kv_table(
-    document,
-    pairs,
-    label_width=Inches(2.1),
-    header=None
-):
-    """A two-column label/value table."""
-
-    rows = len(pairs) + (
-        1 if header else 0
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _set_paragraph_spacing(p, after=6)
+    _set_run(
+        p.add_run("Formal test and evaluation record"),
+        italic=True, color=MUTED, size=Pt(8.5),
     )
 
-    table = document.add_table(
-        rows=rows,
-        cols=2
+    report_date = first_present(report.get("report_date"), report.get("generated_at"))
+    overall = first_present(
+        report.get("overall_result"),
+        session.get("overall_result"),
+        data.get("overall_result"),
+    )
+    standard_code = first_present(
+        standard.get("standard_code"),
+        standard.get("title"),
+        "OIML R 76",
+    )
+    standard_version = first_present(
+        standard.get("version"),
+        standard.get("edition_year"),
+        "Not recorded",
     )
 
-    table.alignment = 1
-
-    value_width = (
-        USABLE_WIDTH - label_width
-    )
-
-    r = 0
-
-    if header:
-        _set_cell_text(
-            table.rows[0].cells[0],
-            header[0],
-            bold=True,
-            color=WHITE
-        )
-
-        _set_cell_text(
-            table.rows[0].cells[1],
-            header[1],
-            bold=True,
-            color=WHITE
-        )
-
-        for cell in table.rows[0].cells:
-            _set_cell_background(
-                cell,
-                ACCENT_HEX
-            )
-            _set_cell_borders(cell)
-
-        _set_repeat_header(
-            table.rows[0]
-        )
-
-        r = 1
-
-    for label, value in pairs:
-        row = table.rows[r]
-
-        _set_cell_text(
-            row.cells[0],
-            label,
-            bold=True
-        )
-
-        _set_cell_background(
-            row.cells[0],
-            LABEL_SHADE_HEX
-        )
-
-        _set_cell_text(
-            row.cells[1],
-            value
-        )
-
-        for cell in row.cells:
-            _set_cell_borders(cell)
-
-        _prevent_row_split(row)
-
-        r += 1
-
-    _set_column_widths(
-        table,
-        [
-            label_width,
-            value_width
-        ]
-    )
-
-    document.add_paragraph().paragraph_format.space_after = Pt(2)
-
-    return table
-
-
-def _add_columnar_table(
-    document,
-    headers,
-    col_widths,
-    rows_data,
-    align_cols=None
-):
-    """A standard header-row table."""
-
-    table = document.add_table(
-        rows=1,
-        cols=len(headers)
-    )
-
-    table.alignment = 1
-
-    for i, h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-
-        _set_cell_text(
-            cell,
-            h,
-            bold=True,
-            color=WHITE,
-            align=WD_ALIGN_PARAGRAPH.CENTER
-        )
-
-        _set_cell_background(
-            cell,
-            ACCENT_HEX
-        )
-
-        _set_cell_borders(cell)
-
-    _set_repeat_header(
-        table.rows[0]
-    )
-
-    for row_values in rows_data:
-        row = table.add_row()
-
-        for i, val in enumerate(row_values):
-            align = (
-                align_cols[i]
-                if align_cols
-                else WD_ALIGN_PARAGRAPH.LEFT
-            )
-
-            color = None
-            bold = False
-
-            if isinstance(val, tuple):
-                text, color, bold = val
-            else:
-                text = val
-
-            _set_cell_text(
-                row.cells[i],
-                text,
-                align=align,
-                color=color,
-                bold=bold
-            )
-
-            _set_cell_borders(
-                row.cells[i]
-            )
-
-        _prevent_row_split(row)
-
-    _set_column_widths(
-        table,
-        col_widths
-    )
-
-    document.add_paragraph().paragraph_format.space_after = Pt(2)
-
-    return table
-
-
-# ---------------------------------------------------------------------------
-# Section builders
-# ---------------------------------------------------------------------------
-
-def _build_masthead(document, data):
-    laboratory = data["laboratory"]
-    standard = data["standard"]
-
-    title = document.add_heading(
-        "NAWI TEST REPORT",
-        level=0
-    )
-
-    title.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    _style_heading(title)
-
-    subtitle = document.add_paragraph()
-
-    subtitle.alignment = (
-        WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    run = subtitle.add_run(
-        "Non-Automatic Weighing Instrument — Test Certificate"
-    )
-
-    run.font.name = FONT_NAME
-    run.font.size = Pt(10.5)
-    run.font.color.rgb = RGBColor(
-        0x55,
-        0x55,
-        0x55
-    )
-    run.italic = True
-
-    subtitle.paragraph_format.space_after = Pt(8)
-
-    _add_horizontal_rule(document)
-
-    table = document.add_table(
-        rows=1,
-        cols=2
-    )
-
-    table.alignment = 1
-
-    left_cell, right_cell = (
-        table.rows[0].cells
-    )
-
-    left_cell.paragraphs[0].text = ""
-
-    _add_field(
-        left_cell,
-        "Laboratory",
-        laboratory["name"]
-    )
-
-    _add_field(
-        left_cell,
-        "Address",
-        f"{laboratory['address']}, "
-        f"{laboratory['city']}, "
-        f"{laboratory['state']} - "
-        f"{laboratory['pincode']}, "
-        f"{laboratory['country']}"
-    )
-
-    _add_field(
-        left_cell,
-        "Registration No.",
-        laboratory["registration_number"]
-    )
-
-    _add_field(
-        left_cell,
-        "Phone",
-        laboratory["phone"]
-    )
-
-    _add_field(
-        left_cell,
-        "Email",
-        laboratory["email"]
-    )
-
-    right_cell.paragraphs[0].text = ""
-
-    report_info = data.get("report") or {}
-
-    _add_field(
-        right_cell,
-        "Report No.",
-        report_info.get(
-            "report_number",
-            "[REPORT NUMBER PLACEHOLDER]"
-        )
-    )
-
-    _add_field(
-        right_cell,
-        "Report Date",
-        report_info.get(
-            "report_date",
-            "[REPORT DATE PLACEHOLDER]"
-        )
-    )
-
-    _add_field(
-        right_cell,
-        "Standard",
-        f"{standard['standard_code']} — "
-        f"{standard['title']}"
-    )
-
-    _add_field(
-        right_cell,
-        "Edition / Version",
-        f"{standard['version']} "
-        f"({standard['edition_year']})"
-    )
-
-    for cell in (
-        left_cell,
-        right_cell
-    ):
-        _set_cell_borders(cell)
-
-        cell.vertical_alignment = (
-            WD_ALIGN_VERTICAL.TOP
-        )
-
-    _set_column_widths(
-        table,
-        [
-            USABLE_WIDTH / 2,
-            USABLE_WIDTH / 2
-        ]
-    )
-
-    document.add_paragraph().paragraph_format.space_after = Pt(4)
-
-
-def _build_session_section(document, data):
-    heading = document.add_heading(
-        "1. Test Session Information",
-        level=1
-    )
-
-    _style_heading(heading)
-
-    session = data["test_session"]
-    result = session["overall_result"]
-
-    table = document.add_table(
-        rows=4,
-        cols=2
-    )
-
-    pairs = [
-        (
-            "Session Number",
-            session["session_number"]
-        ),
-        (
-            "Application Number",
-            session["application_number"]
-        ),
-        (
-            "Test Type",
-            session["test_type"]
-        ),
+    report_rows = [
+        ("Report No.", report.get("report_number"), "Report Date", format_datetime(report_date, False)),
+        ("Report Version", first_present(report.get("report_version"), report.get("version")), "Report Status", first_present(report.get("report_status"), report.get("status"))),
+        ("Application No.", session.get("application_number"), "Test Session No.", session.get("session_number")),
+        ("Applicable Standard", standard_code, "Type Designation", instrument.get("type_designation")),
+        ("Standard Edition / Version", standard_version, "Overall Result", overall),
     ]
 
-    label_width = Inches(2.1)
+    table = document.add_table(rows=0, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [Inches(1.48), Inches(1.92), Inches(1.48), Inches(1.92)])
 
-    for i, (label, value) in enumerate(pairs):
-        row = table.rows[i]
-
-        _set_cell_text(
-            row.cells[0],
-            label,
-            bold=True
-        )
-
-        _set_cell_background(
-            row.cells[0],
-            LABEL_SHADE_HEX
-        )
-
-        _set_cell_text(
-            row.cells[1],
-            value
-        )
-
-        for c in row.cells:
-            _set_cell_borders(c)
-
+    for row_index, values in enumerate(report_rows):
+        row = table.add_row()
+        for i, value in enumerate(values):
+            color = _status_color(value) if i == 3 and row_index == 4 else TEXT
+            _set_cell_text(
+                row.cells[i],
+                value,
+                bold=(i in (0, 2)),
+                color=color,
+                size=Pt(8.1),
+                align=WD_ALIGN_PARAGRAPH.CENTER if i == 3 and row_index == 4 else WD_ALIGN_PARAGRAPH.LEFT,
+            )
+            if i in (0, 2):
+                _set_cell_shading(row.cells[i], BURGUNDY_LIGHT)
+            _set_cell_borders(row.cells[i])
         _prevent_row_split(row)
 
-    row = table.rows[3]
+    return None
 
-    _set_cell_text(
-        row.cells[0],
-        "Overall Result",
-        bold=True
-    )
 
-    _set_cell_background(
-        row.cells[0],
-        LABEL_SHADE_HEX
-    )
-
-    _set_cell_text(
-        row.cells[1],
-        result,
-        bold=True,
-        color=_status_color(result)
-    )
-
-    for c in row.cells:
-        _set_cell_borders(c)
-
-    _prevent_row_split(row)
-
-    _set_column_widths(
-        table,
-        [
-            label_width,
-            USABLE_WIDTH - label_width
-        ]
-    )
-
-    document.add_paragraph().paragraph_format.space_after = Pt(2)
+def _build_laboratory_section(document, data):
+    lab = data.get("laboratory") or {}
+    pairs = [
+        ("Laboratory Code", first_present(lab.get("laboratory_code"), lab.get("code"))),
+        ("Registration No.", lab.get("registration_number")),
+        ("Laboratory Name", lab.get("name")),
+        ("Address", lab.get("address")),
+        ("City / State / PIN", " / ".join(str(v) for v in (lab.get("city"), lab.get("state"), lab.get("pincode")) if v)),
+        ("Country", lab.get("country")),
+        ("Phone", lab.get("phone")),
+        ("Email", lab.get("email")),
+    ]
+    h = document.add_heading("1. Laboratory Information", level=1)
+    _style_heading(h)
+    _add_kv_table(document, pairs)
 
 
 def _build_instrument_section(document, data):
-    heading = document.add_heading(
-        "2. Instrument Under Test",
-        level=1
-    )
+    instrument = data.get("instrument") or {}
+    h = document.add_heading("2. Instrument Under Test", level=1)
+    _style_heading(h)
 
-    _style_heading(heading)
-
-    instrument = data["instrument"]
-
+    headers = ["Specification", "Value", "Specification", "Value"]
     pairs = [
-        (
-            "Manufacturer",
-            instrument["manufacturer"]
-        ),
-        (
-            "Model",
-            instrument["model"]
-        ),
-        (
-            "Type Designation",
-            instrument["type_designation"]
-        ),
-        (
-            "Serial Number",
-            instrument["serial_number"]
-        ),
-        (
-            "Instrument Type",
-            instrument["instrument_type"]
-        ),
-        (
-            "Category",
-            instrument["category"]
-        ),
-        (
-            "Accuracy Class",
-            instrument["accuracy_class"]
-        ),
-        (
-            "Minimum Capacity (Min)",
-            f"{instrument['min_capacity']} "
-            f"{instrument['unit']}"
-        ),
-        (
-            "Maximum Capacity (Max)",
-            f"{instrument['max_capacity']} "
-            f"{instrument['unit']}"
-        ),
-        (
-            "Scale Interval (d)",
-            f"{instrument['scale_interval']} "
-            f"{instrument['unit']}"
-        ),
-        (
-            "Verification Scale Interval (e)",
-            f"{instrument['verification_scale_interval']} "
-            f"{instrument['unit']}"
-        ),
-        (
-            "Number of Intervals",
-            instrument["number_of_intervals"]
-        ),
-        (
-            "Unit",
-            instrument["unit"]
-        ),
+        ("Instrument Code", instrument.get("instrument_code"), "Manufacturer", instrument.get("manufacturer")),
+        ("Model", instrument.get("model"), "Type Designation", instrument.get("type_designation") or instrument.get("type")),
+        ("Serial Number", instrument.get("serial_number"), "Instrument Type", instrument.get("instrument_type")),
+        ("Category", instrument.get("category"), "Accuracy Class", instrument.get("accuracy_class")),
+        ("Minimum Capacity (Min)", first_present(instrument.get("minimum_capacity"), instrument.get("min_capacity")), "Maximum Capacity (Max)", first_present(instrument.get("maximum_capacity"), instrument.get("max_capacity"))),
+        ("Scale Interval (d)", first_present(instrument.get("scale_interval"), instrument.get("d")), "Verification Scale Interval (e)", first_present(instrument.get("verification_scale_interval"), instrument.get("e"))),
+        ("Number of Intervals (n)", first_present(instrument.get("number_of_intervals"), instrument.get("n")), "Unit", instrument.get("unit")),
+        ("Indication Type", instrument.get("indication_type"), "Software / Firmware", first_present(instrument.get("software_firmware"), instrument.get("software_version"))),
     ]
-
-    _add_kv_table(
+    rows = [headers] + [list(map(format_value, row)) for row in pairs]
+    _add_four_cell_table(
         document,
-        pairs,
-        label_width=Inches(2.6),
-        header=(
-            "Specification",
-            "Value"
-        )
+        rows,
+        [Inches(1.58), Inches(1.47), Inches(1.72), Inches(1.43)],
+        header=True,
+        row_alt=True,
     )
 
 
-def _build_tester_section(document, data):
-    heading = document.add_heading(
-        "3. Tester Information",
-        level=1
+def _build_session_section(document, data):
+    h = document.add_heading("3. Tester / Test Session Information", level=1)
+    _style_heading(h)
+
+    session = data.get("test_session") or {}
+    report = data.get("report") or {}
+    tester = data.get("tester") or {}
+    overall = first_present(
+        report.get("overall_result"),
+        session.get("overall_result"),
+        data.get("overall_result"),
     )
 
-    _style_heading(heading)
-
-    tester = data["tester"]
-
-    full_name = " ".join(
-        part
-        for part in [
-            tester.get("first_name"),
-            tester.get("last_name")
-        ]
-        if part
-    )
-
-    pairs = [
-        (
-            "Name",
-            full_name
-        ),
-        (
+    rows_data = [
+        [
+            "Session No.",
+            first_present(session.get("session_number"), session.get("test_session_number")),
+            "Application No.",
+            first_present(session.get("application_number"), session.get("application_no")),
+        ],
+        [
+            "Test Type",
+            session.get("test_type"),
+            "Session Status",
+            session.get("status"),
+        ],
+        [
+            "Tester",
+            get_tester_name(tester),
             "Designation",
-            tester.get("designation")
-        ),
+            tester.get("designation"),
+        ],
+        [
+            "Test Started",
+            display_timestamp(session.get("started_at") or session.get("start_date")),
+            "Test Completed",
+            display_timestamp(session.get("completed_at") or session.get("completion_date")),
+        ],
+        [
+            "Overall Result",
+            overall,
+            "Tester ID",
+            first_present(tester.get("employee_id"), tester.get("employee_code")),
+        ],
     ]
 
-    _add_kv_table(
-        document,
-        pairs,
-        label_width=Inches(2.1)
+    table = document.add_table(rows=0, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(
+        table,
+        [Inches(1.15), Inches(2.15), Inches(1.20), Inches(1.60)],
     )
 
-
-def _build_test_block(
-    document,
-    test,
-    index
-):
-    test_name = (
-        test.get("test_name")
-        or test.get("test_code")
-        or "Unnamed Test"
-    )
-
-    heading = document.add_heading(
-        f"Test {index} — {test_name}",
-        level=2
-    )
-
-    _style_heading(heading)
-
-    if test["applicability_status"] != "APPLICABLE":
-        p = document.add_paragraph()
-
-        run = p.add_run(
-            "Applicability: Not Applicable"
-        )
-
-        run.bold = True
-        run.font.name = FONT_NAME
-        run.font.color.rgb = NEUTRAL_COLOR
-
-        if test.get("na_reason"):
-            reason_p = document.add_paragraph()
-
-            reason_run = reason_p.add_run(
-                f"Reason: {test['na_reason']}"
+    for r_idx, values in enumerate(rows_data):
+        row = table.add_row()
+        for i, value in enumerate(values):
+            is_result = r_idx == len(rows_data) - 1 and i == 1
+            _set_cell_text(
+                row.cells[i],
+                value,
+                bold=(i in (0, 2) or is_result),
+                color=_status_color(value) if is_result else TEXT,
+                size=Pt(8.0),
+                align=(
+                    WD_ALIGN_PARAGRAPH.CENTER
+                    if is_result
+                    else WD_ALIGN_PARAGRAPH.LEFT
+                ),
             )
+            if i in (0, 2):
+                _set_cell_shading(row.cells[i], BURGUNDY_LIGHT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
 
-            reason_run.italic = True
-            reason_run.font.name = FONT_NAME
 
-        document.add_paragraph().paragraph_format.space_after = Pt(2)
+def _build_equipment_section(document, data):
+    h = document.add_heading("4. Test Equipment", level=1)
+    _style_heading(h)
+    equipment = data.get("test_equipment") or []
 
+    if not equipment:
+        _add_kv_table(document, [("Record", "No test equipment information was recorded in the report data.")])
         return
 
-    # -----------------------------------------------------------------------
-    # Observations
-    # -----------------------------------------------------------------------
+    headers = ["Equipment ID", "Equipment", "Model", "Serial / Identification", "Calibration"]
+    table = document.add_table(rows=1, cols=5)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [Inches(0.92), Inches(1.72), Inches(0.98), Inches(1.52), Inches(0.99)])
 
-    obs_heading = document.add_heading(
-        "Observations",
-        level=3
-    )
+    for i, header in enumerate(headers):
+        _set_cell_text(table.rows[0].cells[i], header, bold=True, color=WHITE, size=Pt(7.4), align=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_shading(table.rows[0].cells[i], BURGUNDY)
+        _set_cell_borders(table.rows[0].cells[i])
+    _set_repeat_header(table.rows[0])
 
-    _style_heading(obs_heading)
-
-    observations = (
-        test.get("observations") or []
-    )
-
-    if not observations:
-        document.add_paragraph(
-            "No observation data recorded for this test."
-        )
-
-    else:
-        rows = []
-
-        for obs in observations:
-            value = (
-                obs["value_numeric"]
-                if obs["value_numeric"] is not None
-                else obs["value_text"]
-            )
-
-            rows.append(
-                [
-                    obs["parameter_name"],
-                    value,
-                    obs["unit"] or "—"
-                ]
-            )
-
-        _add_columnar_table(
-            document,
-            headers=[
-                "Parameter",
-                "Value",
-                "Unit"
-            ],
-            col_widths=[
-                USABLE_WIDTH * 0.5,
-                USABLE_WIDTH * 0.25,
-                USABLE_WIDTH * 0.25
-            ],
-            rows_data=rows,
-            align_cols=[
-                WD_ALIGN_PARAGRAPH.LEFT,
-                WD_ALIGN_PARAGRAPH.CENTER,
-                WD_ALIGN_PARAGRAPH.CENTER
-            ],
-        )
-
-    # -----------------------------------------------------------------------
-    # Calculations
-    # -----------------------------------------------------------------------
-
-    calc_heading = document.add_heading(
-        "Calculations",
-        level=3
-    )
-
-    _style_heading(calc_heading)
-
-    calculations = (
-        test.get("calculations") or []
-    )
-
-    if not calculations:
-        document.add_paragraph(
-            "No calculation data recorded for this test."
-        )
-
-    else:
-        rows = []
-
-        for calc in calculations:
-            rows.append(
-                [
-                    calc["calculation_type"],
-                    calc["calculated_value"],
-                    calc["unit"] or "—",
-                    calc["formula"] or "—",
-                ]
-            )
-
-        _add_columnar_table(
-            document,
-            headers=[
-                "Calculation",
-                "Calculated Value",
-                "Unit",
-                "Formula"
-            ],
-            col_widths=[
-                USABLE_WIDTH * 0.26,
-                USABLE_WIDTH * 0.18,
-                USABLE_WIDTH * 0.14,
-                USABLE_WIDTH * 0.42
-            ],
-            rows_data=rows,
-            align_cols=[
-                WD_ALIGN_PARAGRAPH.LEFT,
-                WD_ALIGN_PARAGRAPH.CENTER,
-                WD_ALIGN_PARAGRAPH.CENTER,
-                WD_ALIGN_PARAGRAPH.LEFT
-            ],
-        )
-
-    # -----------------------------------------------------------------------
-    # Results
-    # -----------------------------------------------------------------------
-
-    res_heading = document.add_heading(
-        "Result",
-        level=3
-    )
-
-    _style_heading(res_heading)
-
-    results = (
-        test.get("results") or []
-    )
-
-    if not results:
-        document.add_paragraph(
-            "No result data recorded for this test."
-        )
-
-    else:
-        field_labels = [
-            "Measured Value",
-            "MPE",
-            "Error",
-            "Corrected Error",
-            "Acceptance Condition",
-            "Result",
+    for idx, item in enumerate(equipment):
+        row = table.add_row()
+        values = [
+            item.get("equipment_code") or item.get("identification_number"),
+            item.get("equipment_name"),
+            item.get("model"),
+            item.get("serial_number") or item.get("identification_number"),
+            item.get("calibration_status"),
         ]
+        for i, value in enumerate(values):
+            _set_cell_text(row.cells[i], value, size=Pt(7.7), align=WD_ALIGN_PARAGRAPH.CENTER if i in (0, 4) else WD_ALIGN_PARAGRAPH.LEFT)
+            if idx % 2 == 1:
+                _set_cell_shading(row.cells[i], ROW_ALT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
 
-        n = len(results)
+    due = []
+    for item in equipment:
+        code = item.get("equipment_code") or item.get("identification_number")
+        due_date = item.get("calibration_due_date")
+        if code and due_date:
+            due.append(f"{code}: due {format_datetime(due_date, False)}")
+    if due:
+        p = document.add_paragraph()
+        _set_paragraph_spacing(p, before=1, after=1)
+        _set_run(p.add_run(" | ".join(due)), color=MUTED, size=Pt(7.5))
 
-        label_col_width = Inches(1.9)
 
-        data_col_width = (
-            USABLE_WIDTH - label_col_width
-        ) / n
+def _build_environment_section(document, data):
+    h = document.add_heading("5. Environmental Conditions", level=1)
+    _style_heading(h)
 
-        table = document.add_table(
-            rows=1 + len(field_labels),
-            cols=1 + n
-        )
+    conditions = data.get("environmental_conditions") or []
+    if not conditions:
+        _add_kv_table(document, [("Record", "No environmental conditions were recorded in the report data.")])
+        return
 
-        table.alignment = 1
+    first = conditions[0]
+    last = conditions[-1]
 
-        header_row = table.rows[0]
+    rows = [
+        ["Parameter", "Start", "End", "Recorded At"],
+        ["Temperature", f"{format_value(first.get('temperature'))} °C", f"{format_value(last.get('temperature'))} °C", display_timestamp(first.get("recorded_at"))],
+        ["Relative Humidity", f"{format_value(first.get('humidity'))} %", f"{format_value(last.get('humidity'))} %", display_timestamp(last.get("recorded_at"))],
+        ["Atmospheric Pressure", f"{format_value(first.get('pressure'))} hPa", f"{format_value(last.get('pressure'))} hPa", "Not recorded"],
+    ]
+    _add_header_table(
+        document,
+        rows.pop(0),
+        rows,
+        [Inches(1.45), Inches(1.05), Inches(1.05), Inches(2.34)],
+        align_cols=[WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER],
+    )
 
-        _set_cell_text(
-            header_row.cells[0],
-            "Field",
-            bold=True,
-            color=WHITE
-        )
+    monitoring_source = first_present(first.get("source"), last.get("source"), default="")
+    remarks = first_present(last.get("remarks"), first.get("remarks"), default="")
+    parts = []
+    if monitoring_source:
+        parts.append(f"Monitoring source: {monitoring_source}")
+    if remarks:
+        parts.append(f"Remarks: {remarks}")
+    if parts:
+        p = document.add_paragraph()
+        _set_paragraph_spacing(p, before=1, after=1)
+        _set_run(p.add_run(" | ".join(parts)), color=MUTED, size=Pt(7.5))
 
-        _set_cell_background(
-            header_row.cells[0],
-            ACCENT_HEX
-        )
 
-        for i in range(n):
-            label = (
-                "Value"
-                if n == 1
-                else f"Reading {i + 1}"
-            )
+def _build_summary_section(document, data):
+    h = document.add_heading("6. Summary of Test Results", level=1)
+    _style_heading(h)
 
-            _set_cell_text(
-                header_row.cells[i + 1],
-                label,
-                bold=True,
-                color=WHITE,
-                align=WD_ALIGN_PARAGRAPH.CENTER
-            )
+    tests = data.get("tests") or []
+    if not tests:
+        _add_kv_table(document, [("Record", "No test results were recorded.")])
+        return
 
-            _set_cell_background(
-                header_row.cells[i + 1],
-                ACCENT_HEX
-            )
+    headers = ["No.", "Code", "Test / Examination", "Applicability", "Result", "Remarks"]
+    table = document.add_table(rows=1, cols=6)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    widths = [Inches(0.4), Inches(0.86), Inches(2.12), Inches(1.05), Inches(0.7), Inches(1.11)]
+    _set_column_widths(table, widths)
 
-        for c in header_row.cells:
-            _set_cell_borders(c)
+    for i, header in enumerate(headers):
+        _set_cell_text(table.rows[0].cells[i], header, bold=True, color=WHITE, size=Pt(7.1), align=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_shading(table.rows[0].cells[i], BURGUNDY)
+        _set_cell_borders(table.rows[0].cells[i])
+    _set_repeat_header(table.rows[0])
 
-        _set_repeat_header(header_row)
-
-        field_keys = [
-            "measured_value",
-            "mpe_value",
-            "error_value",
-            "corrected_error",
-            "acceptance_condition",
-            "pass_fail",
+    counts = {"APPLICABLE": 0, "PASS": 0, "FAIL": 0, "N/A": 0}
+    for idx, test in enumerate(tests, start=1):
+        applicability = get_test_applicability(test)
+        result = get_test_result(test)
+        if applicability.upper() == "APPLICABLE":
+            counts["APPLICABLE"] += 1
+        if result.upper() in ("PASS", "FAIL", "N/A"):
+            counts[result.upper()] += 1
+        row = table.add_row()
+        values = [
+            idx,
+            test.get("test_code"),
+            test.get("test_name") or test.get("test_code"),
+            applicability,
+            result,
+            first_present(test.get("remarks"), "Not recorded"),
         ]
-
-        for r_idx, (
-            label,
-            key
-        ) in enumerate(
-            zip(
-                field_labels,
-                field_keys
-            )
-        ):
-            row = table.rows[
-                r_idx + 1
-            ]
-
+        for i, value in enumerate(values):
+            is_result = i == 4
             _set_cell_text(
-                row.cells[0],
-                label,
-                bold=True
+                row.cells[i],
+                value,
+                bold=is_result,
+                color=_status_color(value) if is_result else TEXT,
+                size=Pt(7.4),
+                align=WD_ALIGN_PARAGRAPH.CENTER if i in (0, 1, 3, 4) else WD_ALIGN_PARAGRAPH.LEFT,
             )
-
-            _set_cell_background(
-                row.cells[0],
-                LABEL_SHADE_HEX
-            )
-
-            for c_idx, result in enumerate(results):
-                value = result.get(key)
-
-                if key == "pass_fail":
-                    _set_cell_text(
-                        row.cells[c_idx + 1],
-                        value,
-                        bold=True,
-                        color=_status_color(value),
-                        align=WD_ALIGN_PARAGRAPH.CENTER
-                    )
-                else:
-                    _set_cell_text(
-                        row.cells[c_idx + 1],
-                        value,
-                        align=WD_ALIGN_PARAGRAPH.CENTER
-                    )
-
-            for c in row.cells:
-                _set_cell_borders(c)
-
-            _prevent_row_split(row)
-
-        widths = (
-            [label_col_width]
-            + [data_col_width] * n
-        )
-
-        _set_column_widths(
-            table,
-            widths
-        )
-
-        document.add_paragraph().paragraph_format.space_after = Pt(2)
-
-        for i, result in enumerate(results):
-            summary = result.get(
-                "result_summary"
-            )
-
-            if summary:
-                p = document.add_paragraph()
-
-                prefix = (
-                    "Summary: "
-                    if n == 1
-                    else f"Reading {i + 1} summary: "
-                )
-
-                run = p.add_run(prefix)
-
-                run.bold = True
-                run.italic = True
-                run.font.name = FONT_NAME
-                run.font.size = Pt(9.5)
-
-                run2 = p.add_run(summary)
-
-                run2.italic = True
-                run2.font.name = FONT_NAME
-                run2.font.size = Pt(9.5)
-
-    document.add_paragraph().paragraph_format.space_after = Pt(6)
-
-
-def _build_results_section(document, data):
-    heading = document.add_heading(
-        "4. Test Results",
-        level=1
-    )
-
-    _style_heading(heading)
-
-    for index, test in enumerate(
-        data["tests"],
-        start=1
-    ):
-        _build_test_block(
-            document,
-            test,
-            index
-        )
-
-
-def _build_conclusion_section(
-    document,
-    data
-):
-    heading = document.add_heading(
-        "5. Overall Conclusion",
-        level=1
-    )
-
-    _style_heading(heading)
-
-    session = data["test_session"]
-    result = session["overall_result"]
+            if idx % 2 == 0:
+                _set_cell_shading(row.cells[i], ROW_ALT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
 
     p = document.add_paragraph()
-
-    label_run = p.add_run(
-        "Overall Result: "
+    _set_paragraph_spacing(p, before=1, after=0)
+    _set_run(
+        p.add_run(
+            f"Tests recorded: {len(tests)} | Applicable: {counts['APPLICABLE']} | "
+            f"PASS: {counts['PASS']} | FAIL: {counts['FAIL']} | N/A: {counts['N/A']}"
+        ),
+        color=MUTED,
+        size=Pt(7.7),
     )
 
-    label_run.bold = True
-    label_run.font.name = FONT_NAME
 
-    value_run = p.add_run(
-        str(result)
+def _build_test_metadata(document, test):
+    detailed = test.get("results") or []
+    detailed_result = detailed[0] if detailed and isinstance(detailed[0], dict) else {}
+    name = test.get("test_name") or test.get("test_code") or "Unnamed Test"
+    h = document.add_heading(
+        f"Test {test.get('_index', '')} - {name} ({test.get('test_code') or 'Not recorded'})",
+        level=2,
     )
+    _style_heading(h, size=Pt(10.6), before=5, after=3)
 
-    value_run.bold = True
-    value_run.font.name = FONT_NAME
-    value_run.font.color.rgb = _status_color(
-        result
-    )
+    metadata = [
+        ["Test Code", test.get("test_code"), "Reference Clause", test.get("reference_clause")],
+        ["Applicability", get_test_applicability(test), "Category", test.get("category")],
+        ["Procedure", test.get("procedure"), "Stored Result", get_test_result(test)],
+    ]
 
-    if session.get("remarks"):
-        remarks_p = document.add_paragraph()
+    table = document.add_table(rows=0, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [Inches(1.1), Inches(2.05), Inches(1.18), Inches(1.91)])
 
-        remarks_label = remarks_p.add_run(
-            "Remarks: "
-        )
-
-        remarks_label.bold = True
-        remarks_label.font.name = FONT_NAME
-
-        remarks_value = remarks_p.add_run(
-            session["remarks"]
-        )
-
-        remarks_value.font.name = FONT_NAME
-
-
-# ---------------------------------------------------------------------------
-# Review / Approval
-# ---------------------------------------------------------------------------
-
-def _format_approval_date(value):
-    """
-    Convert an approval timestamp into a readable date.
-
-    Supports:
-    - Python datetime
-    - ISO datetime string
-    - None
-    """
-
-    if not value:
-        return "Pending Approval"
-
-    if isinstance(value, datetime):
-        return value.strftime(
-            "%d-%m-%Y %H:%M"
-        )
-
-    value = str(value)
-
-    try:
-        parsed = datetime.fromisoformat(
-            value.replace(
-                "Z",
-                "+00:00"
+    for r_idx, values in enumerate(metadata):
+        row = table.add_row()
+        for i, value in enumerate(values):
+            is_result = values[0] == "Applicability" and i == 3
+            _set_cell_text(
+                row.cells[i],
+                value,
+                bold=(i in (0, 2) or is_result),
+                color=_status_color(value) if is_result else TEXT,
+                size=Pt(7.7),
+                align=WD_ALIGN_PARAGRAPH.CENTER if is_result else WD_ALIGN_PARAGRAPH.LEFT,
             )
+            if i in (0, 2):
+                _set_cell_shading(row.cells[i], BURGUNDY_LIGHT)
+            _set_cell_borders(row.cells[i])
+        _prevent_row_split(row)
+
+    return detailed_result
+
+
+def _build_observations(document, observations):
+    h = document.add_heading("Observations", level=3)
+    _style_heading(h, size=Pt(8.9), before=4, after=2)
+
+    if not observations:
+        p = document.add_paragraph("No observation data recorded for this test.")
+        _set_paragraph_spacing(p, after=1)
+        _set_run(p.runs[0], color=MUTED, size=Pt(7.8))
+        return
+
+    rows = []
+    for obs in observations:
+        value = first_present(
+            obs.get("value_numeric"),
+            obs.get("value"),
+            obs.get("observed_value"),
+            obs.get("value_text"),
+            default="Not recorded",
         )
+        rows.append([
+            obs.get("parameter_name") or obs.get("parameter") or obs.get("parameter_code") or obs.get("code"),
+            obs.get("parameter_code") or obs.get("code"),
+            format_value(value),
+            obs.get("unit"),
+        ])
 
-        return parsed.strftime(
-            "%d-%m-%Y %H:%M"
+    _add_header_table(
+        document,
+        ["Parameter", "Code", "Observed Value", "Unit"],
+        rows,
+        [Inches(2.55), Inches(0.82), Inches(2.05), Inches(0.82)],
+        align_cols=[WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER],
+    )
+
+
+def _build_calculations(document, calculations):
+    h = document.add_heading("Calculations", level=3)
+    _style_heading(h, size=Pt(8.9), before=4, after=2)
+
+    if not calculations:
+        p = document.add_paragraph("No calculation data recorded for this test.")
+        _set_paragraph_spacing(p, after=1)
+        _set_run(p.runs[0], color=MUTED, size=Pt(7.8))
+        return
+
+    rows = []
+    for calc in calculations:
+        value = first_present(calc.get("calculated_value"), calc.get("value"), default="Not recorded")
+        rows.append([
+            calc.get("calculation_type") or calc.get("calculation"),
+            format_value(value),
+            calc.get("unit"),
+            calc.get("formula") or calc.get("calculation_type"),
+        ])
+
+    _add_header_table(
+        document,
+        ["Calculation", "Calculated Value", "Unit", "Formula"],
+        rows,
+        [Inches(1.75), Inches(1.22), Inches(0.72), Inches(2.55)],
+        align_cols=[WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT],
+    )
+
+
+def _build_evaluation(document, test, detailed_result):
+    h = document.add_heading("Evaluation", level=3)
+    _style_heading(h, size=Pt(8.9), before=4, after=2)
+
+    requirement = first_present(
+        test.get("requirement"),
+        test.get("acceptance_condition"),
+        detailed_result.get("acceptance_condition"),
+        default="Not recorded",
+    )
+    mpe = first_present(
+        test.get("mpe"),
+        test.get("mpe_value"),
+        detailed_result.get("mpe_value"),
+        default="Not recorded",
+    )
+    measured = detailed_result.get("measured_value")
+    error = detailed_result.get("error_value")
+    corrected = detailed_result.get("corrected_error")
+    result = detailed_result.get("pass_fail") or get_test_result(test)
+
+    row = [
+        f"{safe(requirement)} | MPE: {format_value(mpe)}",
+        format_value(measured),
+        format_value(error),
+        format_value(corrected),
+        result,
+    ]
+
+    table = document.add_table(rows=1, cols=5)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [Inches(2.95), Inches(1.05), Inches(0.8), Inches(1.0), Inches(0.94)])
+
+    for i, header in enumerate(["Requirement / MPE", "Measured", "Error", "Corrected Error", "Result"]):
+        _set_cell_text(table.rows[0].cells[i], header, bold=True, color=WHITE, size=Pt(7.2), align=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_shading(table.rows[0].cells[i], BURGUNDY)
+        _set_cell_borders(table.rows[0].cells[i])
+    _set_repeat_header(table.rows[0])
+
+    row_cells = table.add_row().cells
+    for i, value in enumerate(row):
+        _set_cell_text(
+            row_cells[i],
+            value,
+            bold=(i == 4),
+            color=_status_color(value) if i == 4 else TEXT,
+            size=Pt(7.5),
+            align=WD_ALIGN_PARAGRAPH.CENTER,
         )
+        _set_cell_borders(row_cells[i])
+        if i == 0:
+            _set_cell_shading(row_cells[i], BURGUNDY_LIGHT)
+    _prevent_row_split(table.rows[1])
 
-    except ValueError:
-        return value
+    acceptance = detailed_result.get("acceptance_condition") or test.get("acceptance_condition")
+    summary = detailed_result.get("result_summary") or test.get("result_summary")
+
+    extras = []
+    if acceptance:
+        extras.append(("Acceptance Condition", acceptance))
+    if summary:
+        extras.append(("Result Summary", summary))
+
+    if extras:
+        _add_kv_table(document, extras, label_width=Inches(1.48))
+
+    calc_ver = detailed_result.get("calculation_version") or test.get("calculation_version")
+    ruleset_ver = test.get("ruleset_version")
+    versions = []
+    if calc_ver:
+        versions.append(f"Calculation version: {safe(calc_ver)}")
+    if ruleset_ver:
+        versions.append(f"Ruleset version: {safe(ruleset_ver)}")
+    if versions:
+        p = document.add_paragraph()
+        _set_paragraph_spacing(p, before=1, after=1)
+        _set_run(p.add_run(" | ".join(versions)), color=MUTED, size=Pt(7.4))
+
+    remarks = test.get("remarks")
+    if remarks:
+        p = document.add_paragraph()
+        _set_paragraph_spacing(p, before=0, after=1)
+        r1 = p.add_run("Remarks: ")
+        _set_run(r1, bold=True, color=TEXT, size=Pt(7.6))
+        _set_run(p.add_run(str(remarks)), color=TEXT, size=Pt(7.6))
 
 
-def _get_reviewer_name(reviewer):
-    """
-    Build the reviewer display name.
-
-    Expected reviewer structure:
-
-    {
-        "user_id": "...",
-        "first_name": "...",
-        "last_name": "...",
-        "designation": "...",
-        "email": "..."
-    }
-    """
-
-    if not reviewer:
-        return "Pending Approval"
-
-    first_name = reviewer.get(
-        "first_name"
+def _build_na_test(document, test, detailed_result):
+    applicability = get_test_applicability(test)
+    reason = first_present(test.get("na_reason"), "Not applicable")
+    _add_kv_table(
+        document,
+        [
+            ("Applicability", applicability),
+            ("N/A Reason", reason),
+            ("Result", "N/A"),
+            ("Remarks", first_present(test.get("remarks"), "Not recorded")),
+        ],
+        label_width=Inches(1.48),
     )
 
-    last_name = reviewer.get(
-        "last_name"
+
+def _build_detailed_results(document, data):
+    h = document.add_heading("7. Detailed Test Results", level=1)
+    _style_heading(h)
+
+    tests = data.get("tests") or []
+    for idx, raw_test in enumerate(tests, start=1):
+        test = dict(raw_test)
+        test["_index"] = idx
+        detailed_result = _build_test_metadata(document, test)
+
+        if str(get_test_applicability(test)).upper() not in {
+            "APPLICABLE", "YES", "TRUE"
+        }:
+            _build_na_test(document, test, detailed_result)
+        else:
+            _build_observations(document, test.get("observations") or [])
+            _build_calculations(document, test.get("calculations") or [])
+            _build_evaluation(document, test, detailed_result)
+
+
+def _build_construction_examination(document, data):
+    items = data.get("construction_examination") or []
+    if not items:
+        return
+
+    h = document.add_heading("Construction Examination", level=2)
+    _style_heading(h, size=Pt(10.2), before=5, after=3)
+
+    rows = []
+    for item in items:
+        rows.append([
+            item.get("item"),
+            item.get("status"),
+            item.get("remarks"),
+        ])
+
+    _add_header_table(
+        document,
+        ["Examination Item", "Status", "Remarks"],
+        rows,
+        [Inches(3.0), Inches(0.9), Inches(3.35)],
+        align_cols=[WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT],
     )
 
-    full_name = " ".join(
-        part
-        for part in [
-            first_name,
-            last_name
-        ]
-        if part
-    ).strip()
 
-    if full_name:
-        return full_name
+def _build_conclusion(document, data):
+    h = document.add_heading("8. Overall Evaluation / Conclusion", level=1)
+    _style_heading(h)
 
-    return reviewer.get(
-        "email",
-        "Pending Approval"
+    session = data.get("test_session") or {}
+    report = data.get("report") or {}
+    instrument = data.get("instrument") or {}
+    standard = data.get("standard") or {}
+
+    overall = first_present(
+        report.get("overall_result"),
+        session.get("overall_result"),
+        data.get("overall_result"),
+        default="Not recorded",
     )
 
+    table = document.add_table(rows=1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [Inches(2.0), USABLE_WIDTH - Inches(2.0)])
+    _set_cell_text(table.rows[0].cells[0], "OVERALL RESULT", bold=True, color=CHARCOAL, size=Pt(8.5))
+    _set_cell_shading(table.rows[0].cells[0], BURGUNDY_LIGHT)
+    _set_cell_text(
+        table.rows[0].cells[1],
+        overall,
+        bold=True,
+        color=_status_color(overall),
+        size=Pt(9),
+        align=WD_ALIGN_PARAGRAPH.CENTER,
+    )
+    _set_cell_borders(table.rows[0].cells[0])
+    _set_cell_borders(table.rows[0].cells[1])
 
-def _build_approval_section(
-    document,
-    data
-):
-    heading = document.add_heading(
-        "6. Review / Approval",
-        level=1
+    manufacturer = instrument.get("manufacturer") or "the manufacturer"
+    model = instrument.get("model") or "the instrument"
+    designation = instrument.get("type_designation") or ""
+    standard_name = first_present(
+        standard.get("standard_code"),
+        standard.get("title"),
+        default="the applicable standard",
     )
 
-    _style_heading(heading)
+    narrative = (
+        f"The test record presented in this report covers the recorded evaluation of "
+        f"{manufacturer} {model} {designation}. The recorded results are assessed "
+        f"against {standard_name}. The conclusion shown above reflects the stored "
+        f"session/report result and does not independently recalculate measurement rules."
+    )
+    p = document.add_paragraph(narrative)
+    _set_paragraph_spacing(p, before=3, after=2, line=1.05)
+    _set_run(p.runs[0], color=TEXT, size=Pt(8.1))
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # All approval information comes directly from
-    # data["report"].
-    # --------------------------------------------------------
+    remarks = first_present(
+        report.get("remarks"),
+        session.get("remarks"),
+        data.get("remarks"),
+        default="",
+    )
+    if remarks:
+        p = document.add_paragraph()
+        _set_paragraph_spacing(p, after=1)
+        r1 = p.add_run("Remarks: ")
+        _set_run(r1, bold=True, color=TEXT, size=Pt(7.9))
+        _set_run(p.add_run(str(remarks)), color=TEXT, size=Pt(7.9))
+
+
+def _build_remarks(document, data):
+    h = document.add_heading("9. Remarks / Non-Conformities", level=1)
+    _style_heading(h)
 
     report = data.get("report") or {}
-
-    reviewer = report.get(
-        "reviewer"
+    session = data.get("test_session") or {}
+    general = first_present(
+        report.get("remarks"),
+        session.get("remarks"),
+        data.get("remarks"),
+        default="No general remarks recorded.",
     )
-
-    report_status = str(
-        report.get(
-            "report_status"
-        ) or "GENERATED"
-    ).upper()
-
-    reviewer_name = _get_reviewer_name(
-        reviewer
-    )
-
-    approval_date = _format_approval_date(
-        report.get("approved_at")
-    )
-
-    if report_status == "APPROVED":
-        signature = "Approved electronically"
+    non_conformities = data.get("non_conformities") or []
+    if not non_conformities:
+        nc_text = "None recorded."
     else:
-        signature = "Pending Approval"
-
-    pairs = [
-        (
-            "Reviewer",
-            reviewer_name
-        ),
-        (
-            "Approval Date",
-            approval_date
-        ),
-        (
-            "Report Status",
-            report_status
-        ),
-        (
-            "Signature",
-            signature
-        ),
-    ]
+        descriptions = []
+        for item in non_conformities:
+            if isinstance(item, dict):
+                descriptions.append(safe(item.get("description") or item.get("remarks"), "Not specified"))
+            else:
+                descriptions.append(safe(item, "Not specified"))
+        nc_text = "; ".join(descriptions)
 
     _add_kv_table(
         document,
-        pairs,
-        label_width=Inches(2.1)
+        [("General Remarks", general), ("Non-Conformities", nc_text)],
+        label_width=Inches(1.48),
     )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def _build_approval(document, data):
+    h = document.add_heading("10. Review / Approval", level=1)
+    _style_heading(h)
 
-def create_report(
-    data,
-    output_path="NAWI_Test_Report.docx"
-):
+    report = data.get("report") or {}
+    reviewer = report.get("reviewer") or {}
+    reviewer_name = get_reviewer_name(report)
+    reviewer_designation = first_present(
+        reviewer.get("designation"),
+        report.get("reviewer_designation"),
+        default="Not recorded",
+    )
+    status = str(first_present(
+        report.get("report_status"),
+        report.get("status"),
+        default="GENERATED",
+    )).upper()
+    generated_on = first_present(report.get("generated_at"), report.get("report_date"))
+    generated_by = first_present(report.get("generated_by"), "NAWI Test & Compliance System")
+    approved_at = first_present(report.get("approved_at"), report.get("approval_date"))
+    signature_status = "APPROVED" if status == "APPROVED" else "PENDING APPROVAL"
+
+    pairs = [
+        ("Report Status", status),
+        ("Reviewer", reviewer_name),
+        ("Reviewer Designation", reviewer_designation),
+        ("Generated On", display_timestamp(generated_on)),
+        ("Generated By", generated_by),
+        ("Approval Date", display_timestamp(approved_at)),
+        ("Signature Status", signature_status),
+        ("Signed At", display_timestamp(approved_at) if approved_at else "Not recorded"),
+        ("Report Hash", first_present(report.get("report_hash"), report.get("hash"))),
+    ]
+    _add_kv_table(document, pairs)
+
+    table = document.add_table(rows=2, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_column_widths(table, [USABLE_WIDTH / 2, USABLE_WIDTH / 2])
+
+    headers = ["Reviewer / Approving Authority", "Signature / Seal"]
+    for i, header in enumerate(headers):
+        _set_cell_text(table.rows[0].cells[i], header, bold=True, size=Pt(8))
+        _set_cell_shading(table.rows[0].cells[i], BURGUNDY_LIGHT)
+        _set_cell_borders(table.rows[0].cells[i])
+
+    date_text = format_datetime(approved_at, False) if approved_at else "Not recorded"
+    left = table.rows[1].cells[0]
+    right = table.rows[1].cells[1]
+    _set_cell_text(left, f"Name: {reviewer_name}\nDate: {date_text}", size=Pt(8.1))
+    _set_cell_text(right, "____________________________", size=Pt(8.1))
+    left.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+    right.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+    for cell in (left, right):
+        _set_cell_borders(cell)
+        cell.height = Inches(0.65)
+
+
+def _build_synthetic_notice(document, data):
+    h = document.add_heading("11. Synthetic Demonstration Data Notice", level=1)
+    _style_heading(h)
+
+    notice = (
+        "Where this prototype is demonstrated with synthetic or sample values, those values are for "
+        "software demonstration and report-format verification only. They are not actual laboratory "
+        "measurements, calibration records, or legal-metrology evidence. Production reports should be "
+        "generated only from the approved structured test data recorded by the laboratory system."
+    )
+    table = document.add_table(rows=1, cols=1)
+    _set_column_widths(table, [USABLE_WIDTH])
+    cell = table.rows[0].cells[0]
+    _set_cell_text(cell, notice, size=Pt(7.6))
+    _set_cell_shading(cell, ROW_ALT)
+    _set_cell_borders(cell)
+
+
+def _build_attachments(document, data):
+    h = document.add_heading("12. Attachments", level=1)
+    _style_heading(h)
+
+    attachments = data.get("attachments") or []
+    rows = []
+    if attachments:
+        for idx, item in enumerate(attachments, start=1):
+            rows.append([
+                item.get("attachment_id") or idx,
+                item.get("file_name") or item.get("filename"),
+                item.get("attachment_type") or item.get("type"),
+                item.get("description"),
+            ])
+    else:
+        rows.append(["", "No attachments recorded.", "", ""])
+
+    _add_header_table(
+        document,
+        ["ID", "File", "Type", "Description"],
+        rows,
+        [Inches(0.55), Inches(2.25), Inches(1.25), Inches(2.65)],
+        align_cols=[WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT],
+    )
+
+
+# ============================================================
+# DOCUMENT SETUP / ENTRY POINT
+# ============================================================
+
+def _apply_document_styles(document):
+    normal = document.styles["Normal"]
+    normal.font.name = FONT_NAME
+    normal.font.size = BODY_SIZE
+    normal.font.color.rgb = RGBColor.from_string(TEXT)
+    normal.paragraph_format.space_after = Pt(3)
+    normal.paragraph_format.line_spacing = 1.0
+
+    for style_name, size, color in (
+        ("Title", 18, BURGUNDY_DARK),
+        ("Heading 1", 11.5, BURGUNDY),
+        ("Heading 2", 10.6, CHARCOAL),
+        ("Heading 3", 8.9, CHARCOAL),
+    ):
+        style = document.styles[style_name]
+        style.font.name = FONT_NAME
+        style.font.size = Pt(size)
+        style.font.bold = True
+        style.font.color.rgb = RGBColor.from_string(color)
+        style.paragraph_format.keep_with_next = True
+        style.paragraph_format.space_before = Pt(5)
+        style.paragraph_format.space_after = Pt(3)
+
+
+def create_report(data: dict, output_path: str = "NAWI_Test_Report.docx"):
+    """Generate the Word report from structured report data."""
+    if not isinstance(data, dict):
+        raise TypeError("Report data must be a dictionary.")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
     document = Document()
-
     section = document.sections[0]
-
-    section.orientation = (
-        WD_ORIENT.PORTRAIT
-    )
-
+    section.orientation = WD_ORIENT.PORTRAIT
     section.page_width = PAGE_WIDTH
-    section.page_height = Inches(11.69)
-
+    section.page_height = PAGE_HEIGHT
     section.top_margin = PAGE_MARGIN
     section.bottom_margin = PAGE_MARGIN
     section.left_margin = PAGE_MARGIN
     section.right_margin = PAGE_MARGIN
+    section.header_distance = HEADER_DISTANCE
+    section.footer_distance = FOOTER_DISTANCE
 
-    section.header_distance = Inches(0.4)
-    section.footer_distance = Inches(0.4)
+    _apply_document_styles(document)
+    _add_page_header_footer(section, data)
 
-    _apply_base_styles(
-        document
-    )
+    # PAGE 1: IDENTIFICATION
+    _build_report_header(document, data)
+    _build_laboratory_section(document, data)
+    _build_instrument_section(document, data)
+    _build_session_section(document, data)
 
-    laboratory_name = data[
-        "laboratory"
-    ]["name"]
+    # PAGE 2: EQUIPMENT + ENVIRONMENT + SUMMARY
+    document.add_page_break()
+    _build_equipment_section(document, data)
+    _build_environment_section(document, data)
+    _build_summary_section(document, data)
 
-    session_number = data[
-        "test_session"
-    ]["session_number"]
+    # PAGE 3+: DETAILED TESTS
+    document.add_page_break()
+    _build_detailed_results(document, data)
 
-    _add_header(
-        section,
-        laboratory_name,
-        session_number
-    )
+    # FINAL PAGE
+    document.add_page_break()
+    _build_construction_examination(document, data)
+    _build_conclusion(document, data)
+    _build_remarks(document, data)
+    _build_approval(document, data)
+    _build_synthetic_notice(document, data)
+    _build_attachments(document, data)
 
-    _add_page_number_footer(
-        section
-    )
+    document.core_properties.title = "NAWI Test Report"
+    document.core_properties.subject = "Non-Automatic Weighing Instrument Test Report"
+    document.core_properties.author = "NAWI Test & Compliance System"
 
-    _build_masthead(
-        document,
-        data
-    )
+    document.save(output)
+    return str(output.resolve())
 
-    _build_session_section(
-        document,
-        data
-    )
 
-    _build_instrument_section(
-        document,
-        data
-    )
-
-    _build_tester_section(
-        document,
-        data
-    )
-
-    _build_results_section(
-        document,
-        data
-    )
-
-    _build_conclusion_section(
-        document,
-        data
-    )
-
-    _build_approval_section(
-        document,
-        data
-    )
-
-    document.save(
-        output_path
-    )
-
-    return output_path
-
+# ============================================================
+# OPTIONAL LOCAL TEST
+# ============================================================
 
 if __name__ == "__main__":
-    create_report(
-        sample_report_data
-    )
+    try:
+        try:
+            from .sample_report_data import SAMPLE_REPORT_DATA
+        except ImportError:
+            from sample_report_data import sample_report_data as SAMPLE_REPORT_DATA
+
+        result = create_report(
+            SAMPLE_REPORT_DATA,
+            output_path="NAWI_Test_Report.docx",
+        )
+        print("DOCX generated successfully:")
+        print(result)
+    except ImportError as error:
+        print("Could not import sample report data.")
+        print(error)
