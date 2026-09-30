@@ -33,6 +33,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+origins = [
+    "https://navi-project-zeta.vercel.app",
+]
+
 # CORS is configured through environment variables, so deploying needs no code
 # edit (set them in backend/.env locally, or in the Render dashboard):
 #
