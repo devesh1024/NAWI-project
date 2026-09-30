@@ -1,38 +1,82 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useForm } from "react-hook-form";
 import { Search, Plus, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useAuth } from "@/hooks/useAuth";
+import { api } from "@/lib/apiClient";
 
-// Sample rows shaped like the `instruments` table — replace with a
-// supabase.from('instruments').select(...) query once schema is live.
-const SAMPLE_INSTRUMENTS = [
-  { instrument_id: "1", manufacturer: "Avery Berkel", model: "L223", instrument_type: "Platform Scale", accuracy_class: "III", Max: 300, Min: 2, e: 0.1, status: "active" },
-  { instrument_id: "2", manufacturer: "Mettler Toledo", model: "IND560", instrument_type: "Bench Scale", accuracy_class: "II", Max: 15, Min: 0.02, e: 0.001, status: "active" },
-  { instrument_id: "3", manufacturer: "Essae", model: "DS-415", instrument_type: "Weighbridge", accuracy_class: "III", Max: 60000, Min: 200, e: 20, status: "active" },
-];
-
+// Mirrors backend/app/schemas/instrument.py::InstrumentCreate exactly.
 const NEW_INSTRUMENT_FIELDS = [
+  ["instrument_code", "Instrument code", true],
   ["manufacturer", "Manufacturer"],
   ["model", "Model"],
   ["type_designation", "Type designation"],
   ["serial_number", "Serial number"],
   ["instrument_type", "Instrument type"],
-  ["instrument_category", "Instrument category"],
-  ["Max", "Max"],
-  ["Min", "Min"],
-  ["e", "e (scale interval)"],
-  ["d", "d (verification interval)"],
-  ["n", "n (number of intervals)"],
+  ["category", "Category"],
+  ["accuracy_class", "Accuracy class (I / II / III / IIII)"],
+  ["max_capacity", "Max capacity", false, "number"],
+  ["min_capacity", "Min capacity", false, "number"],
+  ["verification_scale_interval", "Verification scale interval (e)", false, "number"],
+  ["scale_interval", "Scale interval (d)", false, "number"],
+  ["number_of_intervals", "Number of intervals (n)", false, "number"],
   ["unit", "Unit"],
 ];
 
 export default function Instruments() {
+  const { token } = useAuth();
+  const [instruments, setInstruments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm();
 
-  const filtered = SAMPLE_INSTRUMENTS.filter((i) =>
-    `${i.manufacturer} ${i.model} ${i.instrument_type}`.toLowerCase().includes(query.toLowerCase())
+  async function loadInstruments() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const data = await api.getInstruments(token);
+      setInstruments(data);
+    } catch (err) {
+      setLoadError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (token) loadInstruments();
+  }, [token]);
+
+  async function onSubmit(values) {
+    setSubmitError("");
+    // Cast the number fields (native inputs give strings); drop empties.
+    const payload = Object.fromEntries(
+      Object.entries(values)
+        .filter(([, v]) => v !== "")
+        .map(([k, v]) => {
+          const field = NEW_INSTRUMENT_FIELDS.find(([key]) => key === k);
+          return [k, field?.[3] === "number" ? Number(v) : v];
+        })
+    );
+    try {
+      await api.createInstrument(payload, token);
+      reset();
+      setShowForm(false);
+      loadInstruments();
+    } catch (err) {
+      setSubmitError(err.message);
+    }
+  }
+
+  const filtered = instruments.filter((i) =>
+    `${i.manufacturer || ""} ${i.model || ""} ${i.instrument_type || ""}`
+      .toLowerCase()
+      .includes(query.toLowerCase())
   );
 
   return (
@@ -59,43 +103,52 @@ export default function Instruments() {
 
       <Card>
         <CardContent className="pt-5">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="pb-2 font-medium">Manufacturer</th>
-                <th className="pb-2 font-medium">Model</th>
-                <th className="pb-2 font-medium">Type</th>
-                <th className="pb-2 font-medium">Accuracy class</th>
-                <th className="pb-2 font-medium">Max / Min / e</th>
-                <th className="pb-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((inst, i) => (
-                <motion.tr
-                  key={inst.instrument_id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                  className="cursor-pointer border-t border-border hover:bg-muted/50"
-                  data-cursor-hover
-                >
-                  <td className="py-2.5 font-medium">{inst.manufacturer}</td>
-                  <td className="py-2.5">{inst.model}</td>
-                  <td className="py-2.5 text-muted-foreground">{inst.instrument_type}</td>
-                  <td className="py-2.5 font-num">{inst.accuracy_class}</td>
-                  <td className="py-2.5 font-num text-xs text-muted-foreground">
-                    {inst.Max} / {inst.Min} / {inst.e}
-                  </td>
-                  <td className="py-2.5">
-                    <span className="rounded-full bg-status-pass/10 px-2 py-0.5 text-xs font-medium text-status-pass">
-                      {inst.status}
-                    </span>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
+          {loading && <p className="py-6 text-center text-sm text-muted-foreground">Loading instruments…</p>}
+          {loadError && <p className="py-6 text-center text-sm text-status-fail">{loadError}</p>}
+          {!loading && !loadError && filtered.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No instruments yet — register your first one.
+            </p>
+          )}
+          {!loading && !loadError && filtered.length > 0 && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground">
+                  <th className="pb-2 font-medium">Manufacturer</th>
+                  <th className="pb-2 font-medium">Model</th>
+                  <th className="pb-2 font-medium">Type</th>
+                  <th className="pb-2 font-medium">Accuracy class</th>
+                  <th className="pb-2 font-medium">Max / Min / e</th>
+                  <th className="pb-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((inst, i) => (
+                  <motion.tr
+                    key={inst.instrument_id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.04 }}
+                    className="cursor-pointer border-t border-border hover:bg-muted/50"
+                    data-cursor-hover
+                  >
+                    <td className="py-2.5 font-medium">{inst.manufacturer || "—"}</td>
+                    <td className="py-2.5">{inst.model || "—"}</td>
+                    <td className="py-2.5 text-muted-foreground">{inst.instrument_type || "—"}</td>
+                    <td className="py-2.5 font-num">{inst.accuracy_class || "—"}</td>
+                    <td className="py-2.5 font-num text-xs text-muted-foreground">
+                      {inst.max_capacity ?? "—"} / {inst.min_capacity ?? "—"} / {inst.verification_scale_interval ?? "—"}
+                    </td>
+                    <td className="py-2.5">
+                      <span className="rounded-full bg-status-pass/10 px-2 py-0.5 text-xs font-medium text-status-pass">
+                        {inst.status || "active"}
+                      </span>
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </CardContent>
       </Card>
 
@@ -122,24 +175,26 @@ export default function Instruments() {
                   <X className="h-5 w-5 text-muted-foreground" />
                 </button>
               </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  setShowForm(false);
-                }}
-                className="grid gap-3 sm:grid-cols-2"
-              >
-                {NEW_INSTRUMENT_FIELDS.map(([key, label]) => (
+              <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
+                {NEW_INSTRUMENT_FIELDS.map(([key, label, required, type]) => (
                   <div key={key}>
-                    <label className="text-sm font-medium">{label}</label>
+                    <label className="text-sm font-medium">
+                      {label}
+                      {required && <span className="text-status-fail"> *</span>}
+                    </label>
                     <input
-                      name={key}
+                      type={type === "number" ? "number" : "text"}
+                      step={type === "number" ? "any" : undefined}
+                      {...register(key, { required })}
                       className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
                     />
                   </div>
                 ))}
+                {submitError && <p className="text-xs text-status-fail sm:col-span-2">{submitError}</p>}
                 <div className="mt-2 sm:col-span-2">
-                  <Button type="submit" className="w-full">Save instrument</Button>
+                  <Button type="submit" className="w-full" disabled={isSubmitting}>
+                    {isSubmitting ? "Saving…" : "Save instrument"}
+                  </Button>
                 </div>
               </form>
             </motion.div>

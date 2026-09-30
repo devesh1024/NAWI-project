@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from jose import jwt
 from passlib.context import CryptContext
 
 
-load_dotenv("backend/.env")
+# Absolute path (backend/.env) so this works regardless of the working directory.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
 pwd_context = CryptContext(

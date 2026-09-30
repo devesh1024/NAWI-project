@@ -3,47 +3,50 @@ import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Scale } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { api } from "@/lib/apiClient";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/Button";
 import { EclipseGlow } from "@/components/effects/EclipseGlow";
 import { BrandLogo } from "@/components/layout/BrandLogo";
 
-// Mirrors the `laboratories` table + the lab_admin `users` row created alongside it.
+// Mirrors backend/app/schemas/auth.py::LabAdminRegister exactly.
 const schema = z.object({
-  name: z.string().min(2, "Required"),
-  registration_number: z.string().min(1, "Required"),
-  address_line_1: z.string().min(1, "Required"),
-  address_line_2: z.string().optional(),
-  city: z.string().min(1, "Required"),
-  state: z.string().min(1, "Required"),
-  pincode: z.string().min(4, "Required"),
-  country: z.string().min(1, "Required").default("India"),
-  phone: z.string().min(6, "Required"),
-  email: z.string().email("Enter a valid lab email"),
-  accreditation_body: z.string().optional(),
-  accreditation_number: z.string().optional(),
-  admin_first_name: z.string().min(1, "Required"),
-  admin_last_name: z.string().min(1, "Required"),
-  admin_email: z.string().email("Enter a valid email"),
-  admin_password: z.string().min(6, "At least 6 characters"),
+  laboratory_code: z.string().min(1, "Required"),
+  laboratory_name: z.string().min(1, "Required"),
+  registration_number: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  pincode: z.string().optional(),
+  country: z.string().optional(),
+  phone: z.string().optional(),
+  laboratory_email: z.string().email("Enter a valid email").optional().or(z.literal("")),
+  website: z.string().optional(),
+  accreditation_fields: z.string().optional(),
+
+  first_name: z.string().min(1, "Required"),
+  last_name: z.string().optional(),
+  email: z.string().email("Enter a valid email"),
+  admin_phone: z.string().optional(),
+  password: z.string().min(6, "At least 6 characters"),
+  designation: z.string().optional(),
+  qualification: z.string().optional(),
 });
 
 const FIELD_GROUPS = [
   {
     legend: "Laboratory details",
     fields: [
-      ["name", "Laboratory name"],
+      ["laboratory_code", "Laboratory code"],
+      ["laboratory_name", "Laboratory name"],
       ["registration_number", "Registration number"],
-      ["accreditation_body", "Accreditation body (optional)"],
-      ["accreditation_number", "Accreditation number (optional)"],
+      ["accreditation_fields", "Accreditation details"],
     ],
   },
   {
     legend: "Address",
     fields: [
-      ["address_line_1", "Address line 1"],
-      ["address_line_2", "Address line 2 (optional)"],
+      ["address", "Address"],
       ["city", "City"],
       ["state", "State"],
       ["pincode", "Pincode"],
@@ -51,16 +54,18 @@ const FIELD_GROUPS = [
     ],
   },
   {
-    legend: "Contact",
+    legend: "Laboratory contact",
     fields: [
       ["phone", "Laboratory phone"],
-      ["email", "Laboratory email"],
+      ["laboratory_email", "Laboratory email"],
+      ["website", "Website"],
     ],
   },
 ];
 
 export default function Register() {
   const navigate = useNavigate();
+  const { signIn } = useAuth();
   const [formError, setFormError] = useState("");
   const {
     register,
@@ -70,58 +75,26 @@ export default function Register() {
 
   async function onSubmit(values) {
     setFormError("");
-
-    // 1. Create the auth user (becomes the lab_admin).
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: values.admin_email,
-      password: values.admin_password,
-    });
-    if (signUpError) {
-      setFormError(signUpError.message);
+    try {
+      // Strip empty-string optionals so they land as null, not "".
+      const payload = Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [k, v === "" ? undefined : v])
+      );
+      await api.register(payload);
+    } catch (err) {
+      setFormError(err.message);
       return;
     }
 
-    // 2. Create the laboratory row.
-    const { data: lab, error: labError } = await supabase
-      .from("laboratories")
-      .insert({
-        name: values.name,
-        registration_number: values.registration_number,
-        address_line_1: values.address_line_1,
-        address_line_2: values.address_line_2 || null,
-        city: values.city,
-        state: values.state,
-        pincode: values.pincode,
-        country: values.country,
-        phone: values.phone,
-        email: values.email,
-        accreditation_body: values.accreditation_body || null,
-        accreditation_number: values.accreditation_number || null,
-        status: "pending_verification",
-      })
-      .select()
-      .single();
-    if (labError) {
-      setFormError(labError.message);
+    // Registration doesn't return a token — log in right after with the
+    // same credentials so the new admin lands straight in the dashboard.
+    const { error } = await signIn(values.email, values.password);
+    if (error) {
+      // Account was created fine; just send them to log in manually.
+      navigate("/login");
       return;
     }
-
-    // 3. Create the users row linking the auth user to this lab as lab_admin.
-    const { error: userError } = await supabase.from("users").insert({
-      user_id: signUpData.user.id,
-      laboratory_id: lab.laboratory_id,
-      first_name: values.admin_first_name,
-      last_name: values.admin_last_name,
-      email: values.admin_email,
-      role: "lab_admin",
-      status: "active",
-    });
-    if (userError) {
-      setFormError(userError.message);
-      return;
-    }
-
-    navigate("/login");
+    navigate("/app/dashboard");
   }
 
   return (
@@ -162,23 +135,34 @@ export default function Register() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-sm font-medium">First name</label>
-                <input {...register("admin_first_name")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                {errors.admin_first_name && <p className="mt-1 text-xs text-status-fail">{errors.admin_first_name.message}</p>}
+                <input {...register("first_name")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                {errors.first_name && <p className="mt-1 text-xs text-status-fail">{errors.first_name.message}</p>}
               </div>
               <div>
                 <label className="text-sm font-medium">Last name</label>
-                <input {...register("admin_last_name")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                {errors.admin_last_name && <p className="mt-1 text-xs text-status-fail">{errors.admin_last_name.message}</p>}
+                <input {...register("last_name")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
               </div>
               <div>
                 <label className="text-sm font-medium">Email</label>
-                <input type="email" {...register("admin_email")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                {errors.admin_email && <p className="mt-1 text-xs text-status-fail">{errors.admin_email.message}</p>}
+                <input type="email" {...register("email")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                {errors.email && <p className="mt-1 text-xs text-status-fail">{errors.email.message}</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium">Phone</label>
+                <input {...register("admin_phone")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Designation</label>
+                <input {...register("designation")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Qualification</label>
+                <input {...register("qualification")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
               </div>
               <div>
                 <label className="text-sm font-medium">Password</label>
-                <input type="password" {...register("admin_password")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                {errors.admin_password && <p className="mt-1 text-xs text-status-fail">{errors.admin_password.message}</p>}
+                <input type="password" {...register("password")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                {errors.password && <p className="mt-1 text-xs text-status-fail">{errors.password.message}</p>}
               </div>
             </div>
           </fieldset>

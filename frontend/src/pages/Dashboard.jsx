@@ -16,8 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 
-// Sample data shaped like it will eventually come from Supabase views —
-// swap for real queries once test_sessions/test_results have real rows.
+// Sample data shaped like it will eventually come from the backend's
+// /api/test-sessions endpoints — swap for real fetches once wired up.
 const KPIS = [
   { label: "Total test sessions", value: 128 },
   { label: "Pass rate", value: 91, suffix: "%" },

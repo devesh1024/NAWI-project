@@ -4,16 +4,16 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.context import (
+from backend.app.services.calculation_engine.context import (
     EvaluationContext,
     InstrumentContext,
     RuleSet,
 )
-from app.services.calculation_engine.engine import (
+from backend.app.services.calculation_engine.engine import (
     CalculationEngine,
     CalculationRequest,
 )
-from app.services.calculation_engine.result_builder import (
+from backend.app.services.calculation_engine.result_builder import (
     build_pass_result,
 )
 

@@ -22,9 +22,9 @@ const NAV_ITEMS = [
   { to: "/app/test-sessions", icon: FlaskConical, label: "Test Sessions", roles: null },
   { to: "/app/reports", icon: FileText, label: "Reports", roles: null },
   { to: "/app/equipment", icon: Wrench, label: "Equipment", roles: null },
-  { to: "/app/standards", icon: BookMarked, label: "Standards & Rules", roles: ["lab_admin"] },
-  { to: "/app/users", icon: Users2, label: "Users", roles: ["lab_admin"] },
-  { to: "/app/audit-log", icon: ScrollText, label: "Audit Log", roles: ["lab_admin"] },
+  { to: "/app/standards", icon: BookMarked, label: "Standards & Rules", roles: ["LAB_ADMIN"] },
+  { to: "/app/users", icon: Users2, label: "Users", roles: ["LAB_ADMIN"] },
+  { to: "/app/audit-log", icon: ScrollText, label: "Audit Log", roles: ["LAB_ADMIN"] },
 ];
 
 /**

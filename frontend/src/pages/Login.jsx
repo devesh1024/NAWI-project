@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Scale, FlaskConical } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CREDENTIALS } from "@/lib/devAuth";
 import { Button } from "@/components/ui/Button";
@@ -12,30 +12,33 @@ import { BrandLogo } from "@/components/layout/BrandLogo";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
-  password: z.string().min(6, "At least 6 characters"),
+  password: z.string().min(1, "Required"),
 });
 
 export default function Login() {
   const navigate = useNavigate();
-  const { signIn, devMode } = useAuth();
+  const { signIn } = useAuth();
   const [formError, setFormError] = useState("");
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm({ resolver: zodResolver(schema) });
 
   async function onSubmit(values) {
     setFormError("");
-    // signIn() checks isDevMode() internally — this call becomes a real
-    // Supabase sign-in automatically once .env has real project values,
-    // no change needed here. See src/hooks/useAuth.jsx.
     const { error } = await signIn(values.email, values.password);
     if (error) {
       setFormError(error.message);
       return;
     }
     navigate("/app/dashboard");
+  }
+
+  function fillDemoCredentials() {
+    setValue("email", DEMO_CREDENTIALS.email);
+    setValue("password", DEMO_CREDENTIALS.password);
   }
 
   return (
@@ -48,19 +51,21 @@ export default function Login() {
           Use the credentials your lab admin created for you.
         </p>
 
-        {devMode && (
-          <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-accent/30 bg-accent/10 p-3 text-xs text-accent-foreground">
-            <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-            <div>
-              <p className="font-medium">No Supabase project connected yet — using a temporary demo login.</p>
-              <p className="mt-1 font-num">
-                {DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}
-              </p>
-            </div>
+        <button
+          type="button"
+          onClick={fillDemoCredentials}
+          className="mt-4 flex w-full items-start gap-2.5 rounded-lg border border-accent/30 bg-accent/10 p-3 text-left text-xs text-accent-foreground hover:bg-accent/15"
+        >
+          <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+          <div>
+            <p className="font-medium">Just want to look around? Use the demo lab.</p>
+            <p className="mt-1 font-num">
+              {DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}
+            </p>
           </div>
-        )}
+        </button>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-4">
           <div>
             <label className="text-sm font-medium">Email</label>
             <input

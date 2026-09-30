@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -123,7 +124,7 @@ def create_audit_log(
 
 @router.get("/{test_session_id}/report-data")
 def get_report_data(
-    test_session_id: str,
+    test_session_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -621,7 +622,7 @@ def get_report_data(
 
 @router.post("/{test_session_id}/generate-report")
 def generate_report(
-    test_session_id: str,
+    test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -844,7 +845,7 @@ def generate_report(
 
 @router.get("/{test_session_id}/report/download-docx")
 def download_docx(
-    test_session_id: str,
+    test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -912,7 +913,7 @@ def download_docx(
 
 @router.get("/{test_session_id}/report/download-pdf")
 def download_pdf(
-    test_session_id: str,
+    test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -977,7 +978,7 @@ def download_pdf(
 
 @router.patch("/{test_session_id}/approve-report")
 def approve_report(
-    test_session_id: str,
+    test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

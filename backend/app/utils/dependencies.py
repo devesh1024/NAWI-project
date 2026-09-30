@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -23,19 +25,22 @@ def get_current_user(
             SECRET_KEY,
             algorithms=[ALGORITHM]
         )
-
-        user_id = payload.get("user_id")
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
+        )
+
+    # The JWT carries the user id as a string. Convert it to a UUID before
+    # querying: the column is a UUID type, and comparing it to a plain str
+    # works on Postgres but raises on SQLite. A missing or malformed id is a
+    # bad token (401), not a server error.
+    try:
+        user_id = UUID(str(payload.get("user_id")))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
         )
 
     user = (

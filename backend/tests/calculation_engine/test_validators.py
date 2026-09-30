@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.validators import (
+from backend.app.services.calculation_engine.validators import (
     validate_accuracy_class,
     validate_decimal,
     validate_load,

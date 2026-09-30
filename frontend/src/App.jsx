@@ -11,6 +11,7 @@ import Register from "@/pages/Register";
 import Dashboard from "@/pages/Dashboard";
 import Instruments from "@/pages/Instruments";
 import TestSessions from "@/pages/TestSessions";
+import TestSessionDetail from "@/pages/TestSessionDetail";
 import Reports from "@/pages/Reports";
 import Equipment from "@/pages/Equipment";
 import Standards from "@/pages/Standards";
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="instruments" element={<Instruments />} />
           <Route path="test-sessions" element={<TestSessions />} />
+          <Route path="test-sessions/:id" element={<TestSessionDetail />} />
           <Route path="reports" element={<Reports />} />
           <Route path="equipment" element={<Equipment />} />
           <Route path="standards" element={<Standards />} />

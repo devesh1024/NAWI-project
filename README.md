@@ -1,78 +1,60 @@
-# NAWI TestSuite — Phase 1
+# NAWI TestSuite
 
-React + Vite + **plain JavaScript** (no TypeScript), Tailwind, Framer Motion,
-Supabase (client wired, schema/RLS not yet created).
+OIML R-76 test report platform for legal-metrology labs. SIH 2026, Problem
+Statement 26035 (Ministry of Consumer Affairs, DoCA).
 
-## Run it
+## Structure
+
+```
+.
+├── frontend/   React + Vite UI, deployed on Vercel. See frontend/README.md.
+├── backend/    FastAPI + PostgreSQL (Supabase-hosted), deployed on Render.
+│               See backend/README.md — includes CORS setup + env vars.
+└── docs/       Reference material both sides build against.
+```
+
+## Current status (fill in your two deployed URLs as you go)
+
+- **Frontend (Vercel)**: `TODO — paste your production Vercel URL here`
+- **Backend (Render)**: `TODO — paste your Render service URL here`
+- **Backend Swagger**: `<above Render URL>/docs`
+
+Once both URLs exist, each side is told about the other through **environment
+variables only** — there is no placeholder left in the code to edit:
+
+1. **Render** (backend service → Environment):
+   `DATABASE_URL`, `JWT_SECRET_KEY`, and `CORS_ORIGINS` = your Vercel URL.
+   See `backend/.env.example` for the exact format of each.
+2. **Vercel** (project → Settings → Environment Variables):
+   `VITE_API_URL` = your Render URL, then **redeploy** (Vite bakes it in at
+   build time). See `frontend/.env.example`.
+
+## Running locally
+
+From the **repo root** (the backend imports as `backend.app...`):
 
 ```bash
-npm install
-npm run dev
+cp backend/.env.example backend/.env      # then fill in DATABASE_URL + JWT_SECRET_KEY
+pip install -r backend/requirements.txt
+python -m backend.create_tables           # or: python backend/create_tables.py
+uvicorn backend.app.main:app --reload     # API on http://127.0.0.1:8000
+
+cd frontend && cp .env.example .env && npm install && npm run dev   # UI on :5173
 ```
 
-### Logging in right now (no Supabase project yet)
+Backend tests run from either the repo root or `backend/`: `python -m pytest`.
 
-Without a `.env`, the app auto-detects there's no Supabase project connected
-and switches to a **temporary hardcoded demo login** so you can actually click
-through the authenticated app:
+## Demo account
 
-```
-demo@nawitest.local / demo1234
-```
+`demo@nawitest.com` / `demo1234` — a **real account that must be seeded
+in the production database** via `POST /api/auth/register` (once, by anyone
+with backend access), not a frontend-only bypass. See `frontend/src/lib/devAuth.js`.
 
-This is shown on the login screen itself while it's active. It's a *dev-mode
-switch*, not a separate code path you'll need to rip out by hand:
+## Who works where
 
-- `src/lib/devAuth.js` — the hardcoded user + a tiny localStorage-backed "session"
-- `src/hooks/useAuth.jsx` — the only file that branches on `isDevMode()`; every
-  other component (Login, Register, AppShell) calls `signIn()` / `signOut()`
-  from `useAuth()` and has no idea whether it's talking to Supabase or the demo user
-
-**To switch to real Supabase**: just fill in `.env` (copy `.env.example`) with
-your project's URL and anon key. `isDevMode()` returns `false` automatically
-the moment `VITE_SUPABASE_URL` is set — no file needs to be touched, deleted,
-or reverted. The demo credentials simply stop being offered.
-
-## What's built in this pass
-
-- Landing page: hero with Eclipse glow + particle field + ASCII ripple, workflow
-  timeline, capabilities grid, compliance strip.
-- Design system: Tailwind tokens (`src/index.css`), Button/Card/StatusBadge/
-  AnimatedNumber components — not the default shadcn theme.
-- Custom cursor (desktop only, disabled on touch, respects `prefers-reduced-motion`).
-- Login + Laboratory Registration pages, wired to Supabase Auth + inserts into
-  `laboratories` / `users` (will work once your Supabase project has those
-  tables — see "Not built yet" below).
-- Authenticated app shell: icon-rail sidebar with sliding active indicator,
-  role-aware nav items, topbar with signed-in user + role.
-- Dashboard: KPI counters, pass/fail donut, monthly trend line, recent
-  sessions table, pending-approvals panel — all on sample data for now.
-- Instruments: searchable list + a "Register instrument" modal form, fields
-  matched to the `instruments` table.
-- Test Sessions / Reports / Equipment / Standards / Users / Audit Log /
-  Settings: placeholder screens (styled, not broken) marking what's backed by
-  which schema tables, ready to be built out next.
-
-## Not built yet (next phases)
-
-1. **Supabase schema + RLS** — the 21 tables from the schema doc don't exist
-   in a database yet; I don't have Supabase project credentials to create
-   them. Once you create a project, send me the SQL editor access or ask me
-   for a migration script and I'll generate the full `CREATE TABLE` +
-   `Row-Level Security policy` SQL to paste in.
-2. **New Test Session wizard** — the 6-step flow (instrument → applicability
-   check → environment → observations/import → calculated results → submit).
-3. **Reports repository**, **Equipment**, **Standards & Rules (admin)**,
-   **Users (admin)**, **Audit Log** — currently placeholders.
-4. Report generation itself (PDF/DOCX assembly + OIML calculation engine) is
-   out of scope for the UI pass, per the agreed plan.
-
-## Notes on the motion layer
-
-ReactBits' actual Pro components (Eclipse, ASCII Ripple, particle text,
-custom cursor) live behind a registry I don't have network access to install
-from in this environment, so `EclipseGlow`, `AsciiRipple`, `ParticleField`,
-and `CustomCursor` are hand-built equivalents (CSS + canvas + Framer Motion)
-matching the same visual/interaction intent. If you do get the real ReactBits
-packages installed locally, these four files are the ones to swap out — the
-rest of the app doesn't depend on their internals.
+- **Frontend** (`frontend/`): UI/UX, all React components, the design
+  system, the motion layer, calling the backend's REST API.
+- **Backend** (`backend/`): FastAPI routes, the Postgres schema, and the
+  OIML calculation engine (MPE lookup + pass/fail + applicability),
+  currently in progress separately — see `backend/README.md` for exactly
+  what's real vs. still a pass-through.

@@ -1,69 +1,50 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { isDevMode, devSignIn, devSignOut, getDevSession } from "@/lib/devAuth";
+import React, { createContext, useContext, useState } from "react";
+import { api } from "@/lib/apiClient";
 
 const AuthContext = createContext(null);
+const STORAGE_KEY = "nawi_session";
 
-// ---------------------------------------------------------------------
-// TEMPORARY: this whole file switches between real Supabase auth and the
-// hardcoded dev user based on isDevMode() (see src/lib/devAuth.js). Once
-// a real Supabase project is connected (VITE_SUPABASE_URL set in .env),
-// isDevMode() flips to false automatically and every call below routes
-// to the real supabase.auth methods instead — no other file needs to
-// change. To remove the dev path entirely later: delete devAuth.js and
-// the `devMode ? ... : ...` branches below.
-// ---------------------------------------------------------------------
+function readStoredSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }) {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const devMode = isDevMode();
-
-  useEffect(() => {
-    if (devMode) {
-      setSession(getDevSession());
-      setLoading(false);
-      return;
-    }
-
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
-
-    return () => listener.subscription.unsubscribe();
-  }, [devMode]);
+  const [session, setSession] = useState(readStoredSession);
 
   async function signIn(email, password) {
-    if (devMode) {
-      const result = devSignIn(email, password);
-      if (result.error) return result;
-      setSession(result.session);
-      return result;
+    try {
+      const data = await api.login({ email, password });
+      const newSession = {
+        token: data.access_token,
+        userId: data.user_id,
+        laboratoryId: data.laboratory_id,
+        role: data.role,
+        email,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
+      setSession(newSession);
+      return { session: newSession };
+    } catch (err) {
+      return { error: { message: err.message } };
     }
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (!error) setSession(data.session);
-    return { error };
   }
 
   function signOut() {
-    if (devMode) {
-      devSignOut();
-      setSession(null);
-      return;
-    }
-    return supabase.auth.signOut();
+    localStorage.removeItem(STORAGE_KEY);
+    setSession(null);
   }
 
   const value = {
     session,
-    user: session?.user ?? null,
-    loading,
-    devMode,
+    token: session?.token ?? null,
+    role: session?.role ?? null,
+    email: session?.email ?? null,
+    loading: false,
     signIn,
     signOut,
   };

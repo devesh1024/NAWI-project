@@ -1,7 +1,8 @@
 node_modules
 dist
 .env
-venv/
+.env.local
+.DS_Store
 __pycache__/
 *.pyc
 generated_reports/

@@ -2,12 +2,12 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.context import (
+from backend.app.services.calculation_engine.context import (
     EvaluationContext,
     InstrumentContext,
     RuleSet,
 )
-from app.services.calculation_engine.voltage import calculate_voltage
+from backend.app.services.calculation_engine.voltage import calculate_voltage
 
 
 @pytest.fixture

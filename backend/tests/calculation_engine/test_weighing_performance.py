@@ -4,12 +4,12 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.context import (
+from backend.app.services.calculation_engine.context import (
     EvaluationContext,
     InstrumentContext,
     RuleSet,
 )
-from app.services.calculation_engine.weighing_performance import (
+from backend.app.services.calculation_engine.weighing_performance import (
     calculate_weighing_performance,
 )
 

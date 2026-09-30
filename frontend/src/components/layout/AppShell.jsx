@@ -1,45 +1,22 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/lib/supabaseClient";
-import { getDevProfile } from "@/lib/devAuth";
 
 export default function AppShell() {
-  const { user, devMode, signOut } = useAuth();
-  const [profile, setProfile] = useState(null);
-
-  useEffect(() => {
-    if (!user) return;
-    // TEMPORARY: dev mode skips the real `users` table lookup (it doesn't
-    // exist until your Supabase schema is created) and uses the hardcoded
-    // profile instead. Once devMode is false this branch is simply never
-    // taken — nothing to delete by hand later.
-    if (devMode) {
-      setProfile(getDevProfile());
-      return;
-    }
-    supabase
-      .from("users")
-      .select("first_name, last_name, role")
-      .eq("user_id", user.id)
-      .single()
-      .then(({ data }) => setProfile(data));
-  }, [user, devMode]);
+  const { email, role, signOut } = useAuth();
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar role={profile?.role} />
+      <Sidebar role={role} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
           <div />
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <p className="text-sm font-medium leading-tight">
-                {profile ? `${profile.first_name} ${profile.last_name}` : user?.email}
-              </p>
+              <p className="text-sm font-medium leading-tight">{email}</p>
               <p className="text-xs capitalize leading-tight text-muted-foreground">
-                {profile?.role?.replace("_", " ") || "—"}
+                {role?.toLowerCase().replace("_", " ") || "—"}
               </p>
             </div>
             <button

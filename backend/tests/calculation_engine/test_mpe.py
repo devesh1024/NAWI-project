@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.calculation_engine.mpe import resolve_mpe
+from backend.app.services.calculation_engine.mpe import resolve_mpe
 
 
 MPE_RULES = {

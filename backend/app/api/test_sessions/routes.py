@@ -102,7 +102,7 @@ def get_test_session(
 
 @router.patch("/{test_session_id}/status")
 def update_test_session_status(
-    test_session_id: str,
+    test_session_id: UUID,
     data: TestSessionStatusUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
