@@ -1,6 +1,7 @@
 import uuid
+from datetime import date
 
-from sqlalchemy import String, Text, Date, DateTime
+from sqlalchemy import String, Text, Integer, Date, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -33,21 +34,22 @@ class Standard(Base):
     )
 
     edition_year: Mapped[int | None] = mapped_column(
+        Integer,
         nullable=True
     )
 
-    effective_from: Mapped[Date | None] = mapped_column(
+    effective_from: Mapped[date | None] = mapped_column(
         Date,
         nullable=True
     )
 
-    effective_to: Mapped[Date | None] = mapped_column(
+    effective_to: Mapped[date | None] = mapped_column(
         Date,
         nullable=True
     )
 
     source_document: Mapped[str | None] = mapped_column(
-        Text,
+        String(255),
         nullable=True
     )
 

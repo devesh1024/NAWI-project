@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
@@ -13,7 +13,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
-    KeepTogether,
 )
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
@@ -36,9 +35,7 @@ WHITE = colors.white
 # ============================================================
 
 def safe(value: Any, default: str = "-") -> str:
-    """
-    Convert values safely to strings for PDF generation.
-    """
+    """Convert values safely to strings for PDF generation."""
     if value is None:
         return default
 
@@ -51,14 +48,10 @@ def safe(value: Any, default: str = "-") -> str:
 
 
 def format_date(value: Any) -> str:
-    """
-    Format date/datetime values without making assumptions
-    about the source format.
-    """
+    """Format date/datetime values safely."""
     if value is None:
         return "-"
 
-    # Already a string
     if isinstance(value, str):
         return value
 
@@ -69,9 +62,7 @@ def format_date(value: Any) -> str:
 
 
 def format_value(value: Any) -> str:
-    """
-    Display numbers cleanly while preserving meaningful values.
-    """
+    """Display numbers cleanly."""
     if value is None:
         return "-"
 
@@ -81,16 +72,6 @@ def format_value(value: Any) -> str:
         return f"{value:g}"
 
     return str(value)
-
-
-def paragraph(
-    text: Any,
-    style: ParagraphStyle,
-) -> Paragraph:
-    """
-    Small helper for safely creating ReportLab Paragraphs.
-    """
-    return Paragraph(safe(text), style)
 
 
 # ============================================================
@@ -252,9 +233,7 @@ def build_styles():
 # ============================================================
 
 def draw_page_header_footer(canvas, doc):
-    """
-    Draws the header and footer on every page.
-    """
+    """Draw header and footer on every page."""
 
     canvas.saveState()
 
@@ -275,10 +254,7 @@ def draw_page_header_footer(canvas, doc):
 
     lab_name = laboratory.get("name") or "Test Laboratory"
 
-    # --------------------------------------------------------
     # Header
-    # --------------------------------------------------------
-
     canvas.setStrokeColor(BORDER)
     canvas.setLineWidth(0.5)
 
@@ -298,18 +274,13 @@ def draw_page_header_footer(canvas, doc):
         f"{lab_name} — NAWI Test Report",
     )
 
-    session_text = f"Session: {safe(session_number)}"
-
     canvas.drawRightString(
         width - doc.rightMargin,
         height - 10.5 * mm,
-        session_text,
+        f"Session: {safe(session_number)}",
     )
 
-    # --------------------------------------------------------
     # Footer
-    # --------------------------------------------------------
-
     canvas.setStrokeColor(BORDER)
 
     canvas.line(
@@ -342,9 +313,7 @@ def make_table(
     row_background=True,
     alignments=None,
 ):
-    """
-    Creates a consistently styled report table.
-    """
+    """Create a consistently styled report table."""
 
     table = Table(
         data,
@@ -451,15 +420,7 @@ def make_key_value_table(
     rows,
     col_widths=None,
 ):
-    """
-    Creates a two-column key/value table.
-
-    Example:
-        [
-            ("Manufacturer", "A&D"),
-            ("Model", "GX-6000")
-        ]
-    """
+    """Create a two-column key/value table."""
 
     table_data = []
 
@@ -495,53 +456,55 @@ def make_key_value_table(
         hAlign="LEFT",
     )
 
-    commands = [
-        (
-            "GRID",
-            (0, 0),
-            (-1, -1),
-            0.5,
-            BORDER,
-        ),
-        (
-            "VALIGN",
-            (0, 0),
-            (-1, -1),
-            "MIDDLE",
-        ),
-        (
-            "BACKGROUND",
-            (0, 0),
-            (0, -1),
-            LIGHT_BLUE,
-        ),
-        (
-            "LEFTPADDING",
-            (0, 0),
-            (-1, -1),
-            5,
-        ),
-        (
-            "RIGHTPADDING",
-            (0, 0),
-            (-1, -1),
-            5,
-        ),
-        (
-            "TOPPADDING",
-            (0, 0),
-            (-1, -1),
-            4,
-        ),
-        (
-            "BOTTOMPADDING",
-            (0, 0),
-            (-1, -1),
-            4,
-        ),
-    ]
-
-    table.setStyle(TableStyle(commands))
+    table.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    BORDER,
+                ),
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "MIDDLE",
+                ),
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (0, -1),
+                    LIGHT_BLUE,
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    5,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    5,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    4,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    4,
+                ),
+            ]
+        )
+    )
 
     return table
 
@@ -567,15 +530,6 @@ def build_report_header(data, styles):
         )
     )
 
-    elements.append(
-        Table(
-            [["", ""]],
-            colWidths=[1, 1],
-            rowHeights=[1.5],
-        )
-    )
-
-    # Blue separator
     separator = Table(
         [[""]],
         colWidths=[170 * mm],
@@ -637,8 +591,7 @@ def build_report_header(data, styles):
         ],
         [
             Paragraph(
-                "<b>Email:</b> "
-                + safe(laboratory.get("email")),
+                "<b>Email:</b> " + safe(laboratory.get("email")),
                 styles["BodySmall"],
             )
         ],
@@ -865,10 +818,7 @@ def build_instrument_information(data, styles):
             or instrument.get("type"),
         ),
         ("Serial Number", instrument.get("serial_number")),
-        (
-            "Instrument Type",
-            instrument.get("instrument_type"),
-        ),
+        ("Instrument Type", instrument.get("instrument_type")),
         ("Category", instrument.get("category")),
         ("Accuracy Class", instrument.get("accuracy_class")),
         (
@@ -1004,7 +954,7 @@ def build_observations(observations, styles):
             or "-"
         )
 
-        value =(
+        value = (
             observation.get("value_numeric")
             if observation.get("value_numeric") is not None
             else (
@@ -1094,13 +1044,22 @@ def build_calculations(calculations, styles):
 
         rows.append(
             [
-                Paragraph(safe(calculation_name), styles["TableCell"]),
+                Paragraph(
+                    safe(calculation_name),
+                    styles["TableCell"],
+                ),
                 Paragraph(
                     format_value(calculated_value),
                     styles["TableCell"],
                 ),
-                Paragraph(safe(unit), styles["TableCell"]),
-                Paragraph(safe(formula), styles["TableCell"]),
+                Paragraph(
+                    safe(unit),
+                    styles["TableCell"],
+                ),
+                Paragraph(
+                    safe(formula),
+                    styles["TableCell"],
+                ),
             ]
         )
 
@@ -1191,8 +1150,14 @@ def build_result(result, styles):
 
         rows.append(
             [
-                Paragraph(safe(key), styles["TableCellBold"]),
-                Paragraph(result_text, value_style),
+                Paragraph(
+                    safe(key),
+                    styles["TableCellBold"],
+                ),
+                Paragraph(
+                    result_text,
+                    value_style,
+                ),
             ]
         )
 
@@ -1225,12 +1190,12 @@ def build_test_block(test, index, styles):
     elements = []
 
     test_name = (
-    test.get("test_name")
-    or test.get("test_code")
-    or test.get("name")
-    or test.get("test_definition_name")
-    or test.get("test_definition_code")
-    or f"Test {index}"
+        test.get("test_name")
+        or test.get("test_code")
+        or test.get("name")
+        or test.get("test_definition_name")
+        or test.get("test_definition_code")
+        or f"Test {index}"
     )
 
     elements.append(
@@ -1240,14 +1205,8 @@ def build_test_block(test, index, styles):
         )
     )
 
-    # --------------------------------------------------------
-    # TEST RESULT STATUS
-    # --------------------------------------------------------
-
     test_result = test.get("result")
 
-    # The sample/API structure stores the detailed result
-    # inside the "results" list.
     detailed_results = test.get("results") or []
 
     detailed_result = (
@@ -1257,10 +1216,7 @@ def build_test_block(test, index, styles):
         else {}
     )
 
-    # --------------------------------------------------------
     # N/A TEST
-    # --------------------------------------------------------
-
     if str(test_result).upper() in {
         "N/A",
         "NA",
@@ -1284,10 +1240,7 @@ def build_test_block(test, index, styles):
 
         return elements
 
-    # --------------------------------------------------------
     # OBSERVATIONS
-    # --------------------------------------------------------
-
     observations = test.get("observations") or []
 
     elements.extend(
@@ -1299,10 +1252,7 @@ def build_test_block(test, index, styles):
 
     elements.append(Spacer(1, 4))
 
-    # --------------------------------------------------------
     # CALCULATIONS
-    # --------------------------------------------------------
-
     calculations = test.get("calculations") or []
 
     elements.extend(
@@ -1314,15 +1264,10 @@ def build_test_block(test, index, styles):
 
     elements.append(Spacer(1, 4))
 
-    # --------------------------------------------------------
     # RESULT
-    # --------------------------------------------------------
-
     if detailed_result:
         result = detailed_result
 
-        # Convert API/sample field names into the names
-        # expected by build_result().
         result = {
             "measured_value": result.get("measured_value"),
             "mpe": result.get("mpe_value"),
@@ -1341,7 +1286,6 @@ def build_test_block(test, index, styles):
                 styles,
             )
         )
-
     else:
         elements.append(
             Paragraph(
@@ -1349,56 +1293,6 @@ def build_test_block(test, index, styles):
                 styles["BodySmall"],
             )
         )
-
-    elements.append(Spacer(1, 6))
-
-    return elements
-
-    # --------------------------------------------------------
-    # OBSERVATIONS
-    # --------------------------------------------------------
-
-    observations = test.get("observations") or []
-
-    elements.extend(
-        build_observations(
-            observations,
-            styles,
-        )
-    )
-
-    elements.append(Spacer(1, 4))
-
-    # --------------------------------------------------------
-    # CALCULATIONS
-    # --------------------------------------------------------
-
-    calculations = test.get("calculations") or []
-
-    elements.extend(
-        build_calculations(
-            calculations,
-            styles,
-        )
-    )
-
-    elements.append(Spacer(1, 4))
-
-    # --------------------------------------------------------
-    # RESULT
-    # --------------------------------------------------------
-
-    result = test.get("result")
-
-    if not isinstance(result, dict):
-        result = {}
-
-    elements.extend(
-        build_result(
-            result,
-            styles,
-        )
-    )
 
     elements.append(Spacer(1, 6))
 
@@ -1441,7 +1335,6 @@ def build_test_results(data, styles):
 
         elements.extend(test_elements)
 
-        # Add spacing between tests
         if index < len(tests):
             elements.append(Spacer(1, 8))
 
@@ -1488,12 +1381,19 @@ def build_conclusion(data, styles):
     else:
         result_style = styles["BodySmallBold"]
 
+    if result_upper == "PASS":
+        result_text_color = GREEN
+    elif result_upper == "FAIL":
+        result_text_color = RED
+    else:
+        result_text_color = TEXT
+
     elements.append(
         Paragraph(
             "Overall Result: "
-            + f'<font color="{result_style.textColor.hexval()}">'
-            + f"<b>{safe(overall_result)}</b>"
-            + "</font>",
+            f'<font color="{result_text_color.hexval()}">'
+            f"<b>{safe(overall_result)}</b>"
+            "</font>",
             styles["BodySmall"],
         )
     )
@@ -1585,21 +1485,11 @@ def create_pdf(
     output_path: str = "NAWI_Test_Report.pdf",
 ):
     """
-    Generate a NAWI PDF report from the same structured report
-    data used by the DOCX generator.
+    Generate a NAWI PDF report from structured report data.
 
-    Parameters
-    ----------
-    data:
-        Structured report data returned by the report-data API.
-
-    output_path:
-        Destination path for the generated PDF.
-
-    Returns
-    -------
-    str:
-        Absolute path to the generated PDF.
+    IMPORTANT:
+    `data` must be the report-data dictionary.
+    It must NOT be a DOCX file path.
     """
 
     if not isinstance(data, dict):
@@ -1626,7 +1516,7 @@ def create_pdf(
         subject="Non-Automatic Weighing Instrument Test Report",
     )
 
-    # Store data on document so page header/footer can access it.
+    # Make report data available to header/footer.
     document.report_data = data
 
     story = []
@@ -1669,10 +1559,6 @@ def create_pdf(
 
     # --------------------------------------------------------
     # PAGE BREAK
-    #
-    # The current DOCX reference naturally has the Test Results
-    # section starting on page 2, so we deliberately preserve
-    # that structure here.
     # --------------------------------------------------------
 
     story.append(PageBreak())
@@ -1724,16 +1610,6 @@ def create_pdf(
 # ============================================================
 
 if __name__ == "__main__":
-    """
-    Optional standalone test.
-
-    This expects sample_report_data.py to contain:
-
-        SAMPLE_REPORT_DATA
-
-    If your sample file uses a different variable name,
-    simply change the import below.
-    """
 
     try:
         from .sample_report_data import SAMPLE_REPORT_DATA
@@ -1743,7 +1619,7 @@ if __name__ == "__main__":
             output_path="NAWI_Test_Report.pdf",
         )
 
-        print(f"PDF generated successfully:")
+        print("PDF generated successfully:")
         print(output)
 
     except ImportError as error:

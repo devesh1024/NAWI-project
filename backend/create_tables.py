@@ -13,6 +13,14 @@ from backend.app.models.test_observation import TestObservation
 from backend.app.models.test_calculation import TestCalculation
 from backend.app.models.test_result import TestResult
 from backend.app.models.report import Report
+from backend.app.models.environmental_condition import EnvironmentalCondition
+from backend.app.models.test_equipment import TestEquipment
+from backend.app.models.test_equipment_usage import TestEquipmentUsage
+from backend.app.models.observation_import import ObservationImport
+from backend.app.models.report_version import ReportVersion
+from backend.app.models.attachment import Attachment
+from backend.app.models.audit_log import AuditLog
+from backend.app.models.digital_signature import DigitalSignature
 
 Base.metadata.create_all(bind=engine)
 
