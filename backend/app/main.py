@@ -11,7 +11,9 @@ from backend.app.api.instruments.routes import router as instruments_router
 from backend.app.api.test_sessions.routes import router as test_sessions_router
 from backend.app.api.test_sessions.test_routes import router as test_session_tests_router
 from backend.app.api.observations.routes import router as observations_router
-from backend.app.api.test_sessions.calculation_routes import router as calculation_router
+from backend.app.api.test_sessions.calculation_routes import (
+    router as calculation_router,
+)
 from backend.app.api.reports.routes import router as reports_router
 from backend.app.api.laboratories.router import router as laboratories_router
 from backend.app.api.users.router import router as users_router
@@ -28,48 +30,80 @@ from backend.app.api.test_equipment.routes import (
     router as test_equipment_router,
 )
 
-app = FastAPI(
-    title="NAWI Test Report Generation API",
-    version="1.0.0"
-)
 
-origins = [
-    "https://navi-project-zeta.vercel.app",
-]
-
-# CORS is configured through environment variables, so deploying needs no code
-# edit (set them in backend/.env locally, or in the Render dashboard):
-#
-#   CORS_ORIGINS       comma-separated exact origins allowed to call the API,
-#                      e.g. https://nawi-testsuite.vercel.app
-#   CORS_ORIGIN_REGEX  optional regex, for Vercel preview deployments whose URL
-#                      changes per branch, e.g. https://nawi-testsuite.*\.vercel\.app
-#
-# The local Vite dev server origins are always allowed.
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # backend/.env; real env vars win
+# Load environment variables from backend/.env locally.
+# Real environment variables (e.g. Render) take precedence.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 logger = logging.getLogger("uvicorn.error")
 
 
+app = FastAPI(
+    title="NAWI Test Report Generation API",
+    version="1.0.0",
+)
+
+
 def _parse_origins(value: str | None) -> list[str]:
-    """'a, b/ ,,c' -> ['a', 'b', 'c'] (trimmed; trailing slashes dropped, since
-    browsers send origins without one and a trailing slash would never match)."""
-    return [o.strip().rstrip("/") for o in (value or "").split(",") if o.strip()]
+    """
+    Parse comma-separated CORS origins.
+
+    Example:
+        "https://example.com, https://another.com/"
+        ->
+        ["https://example.com", "https://another.com"]
+    """
+    return [
+        origin.strip().rstrip("/")
+        for origin in (value or "").split(",")
+        if origin.strip()
+    ]
 
 
+# Local Vite development URLs
 LOCAL_DEV_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
-ALLOWED_ORIGINS = LOCAL_DEV_ORIGINS + _parse_origins(os.getenv("CORS_ORIGINS"))
+
+# Production / deployed frontend URLs are configured through:
+#
+# CORS_ORIGINS=https://navi-project-zeta.vercel.app
+#
+# Multiple origins can be comma-separated.
+ALLOWED_ORIGINS = (
+    LOCAL_DEV_ORIGINS
+    + _parse_origins(os.getenv("CORS_ORIGINS"))
+)
+
+
+# Optional regex for Vercel preview deployments.
+#
+# Example Render environment variable:
+# CORS_ORIGIN_REGEX=https://navi-project-zeta-.*\.vercel\.app
+#
+# Leave unset if only the production Vercel URL is required.
 ALLOWED_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX") or None
+
 
 if len(ALLOWED_ORIGINS) == len(LOCAL_DEV_ORIGINS) and not ALLOWED_ORIGIN_REGEX:
     logger.info(
-        "CORS: only local dev origins are allowed. Set CORS_ORIGINS to your "
-        "deployed frontend URL or the browser will block it."
+        "CORS: only local development origins are allowed. "
+        "Set CORS_ORIGINS to your deployed frontend URL."
     )
+else:
+    logger.info(
+        "CORS allowed origins: %s",
+        ALLOWED_ORIGINS,
+    )
+
+    if ALLOWED_ORIGIN_REGEX:
+        logger.info(
+            "CORS allowed origin regex: %s",
+            ALLOWED_ORIGIN_REGEX,
+        )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,6 +113,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# -------------------------------------------------------------------
+# API Routers
+# -------------------------------------------------------------------
 
 app.include_router(auth_router)
 app.include_router(instruments_router)
@@ -95,6 +134,11 @@ app.include_router(test_applicability_rules_router)
 app.include_router(mpe_rules_router)
 app.include_router(environmental_conditions_router)
 app.include_router(test_equipment_router)
+
+
+# -------------------------------------------------------------------
+# Root endpoint
+# -------------------------------------------------------------------
 
 @app.get("/")
 def root():
