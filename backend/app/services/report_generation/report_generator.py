@@ -286,6 +286,7 @@ def _set_cell_text(
 ) -> None:
     cell.text = ""
     p = cell.paragraphs[0]
+    p.paragraph_format.keep_together = True
     p.alignment = align
     _set_paragraph_spacing(p, after=0, line=1.0)
     run = p.add_run(safe(text, ""))
@@ -302,7 +303,7 @@ def _status_color(value: Any) -> str:
     return CHARCOAL
 
 
-def _style_heading(paragraph, *, size=Pt(11.5), color=BURGUNDY, before=6, after=4) -> None:
+def _style_heading(paragraph, *, size=Pt(11.5), color=BURGUNDY, before=5, after=3) -> None:
     paragraph.paragraph_format.keep_with_next = True
     _set_paragraph_spacing(paragraph, before=before, after=after, line=1.0)
     for run in paragraph.runs:
