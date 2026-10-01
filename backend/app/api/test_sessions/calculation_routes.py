@@ -59,6 +59,17 @@ def _json_safe(value: Any) -> Any:
 
     return value
 
+def _to_decimal(value: Any) -> Any:
+    """JSON has only int/float; the engine requires Decimal."""
+    if isinstance(value, bool) or value is None or isinstance(value, (str, Decimal)):
+        return value
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))          # str() keeps the digits the tester typed
+    if isinstance(value, dict):
+        return {str(k): _to_decimal(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_decimal(v) for v in value]
+    return value
 
 def _result_to_float(value: Any) -> float | None:
     """
@@ -212,7 +223,7 @@ def calculate_and_save_result(
     try:
         calculation_request = CalculationRequest(
             test_code=test_code,
-            inputs=data.inputs,
+            inputs=_to_decimal(data.inputs),
         )
 
         result = engine.calculate(

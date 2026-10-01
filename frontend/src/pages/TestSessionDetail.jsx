@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { api, downloadResponse } from "@/lib/apiClient";
+import { TEST_INPUT_TEMPLATES, DEDICATED_FORM_TEST_CODES } from "@/lib/calculationTemplates";
 
 const STATUS_FLOW = ["DRAFT", "IN PROGRESS", "SUBMITTED", "UNDER REVIEW", "APPROVED", "REJECTED"];
 // Only these roles can approve, per the backend's require_lab_admin /
@@ -18,6 +19,7 @@ const APPROVER_ROLES = ["LAB_ADMIN", "REVIEWER"];
 function resultBadge(pass_fail) {
   if (pass_fail === "PASS") return "pass";
   if (pass_fail === "FAIL") return "fail";
+  if (pass_fail === "N/A") return "na";
   return "pending";
 }
 
@@ -26,7 +28,12 @@ export default function TestSessionDetail() {
   const { token, role } = useAuth();
 
   const [session, setSession] = useState(null);
-  const [reportData, setReportData] = useState(null);
+  // `tests` is seeded from report-data on load, then mutated locally as
+  // tests/observations/calculations are added — see handleTestAdded /
+  // handleObservationAdded / handleCalculationSaved below. This is what
+  // avoids a full page/session reload after every single add: only this
+  // array updates, via the exact object the API just returned, no refetch.
+  const [tests, setTests] = useState([]);
   const [testDefinitions, setTestDefinitions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -41,12 +48,12 @@ export default function TestSessionDetail() {
         api.getTestSession(id, token),
         // report-data works even before a report is generated — it's the
         // only read endpoint that returns a session's tests/observations/
-        // calculations/results, so it doubles as the "current progress" view.
+        // calculations/results, so it's used once here to seed local state.
         api.getReportData(id, token).catch(() => null),
         api.getTestDefinitions(token),
       ]);
       setSession(s);
-      setReportData(rd);
+      setTests(rd?.tests || []);
       setTestDefinitions(td.filter((t) => t.standard_id === s.standard_id && t.active));
     } catch (err) {
       setLoadError(err.message);
@@ -58,6 +65,48 @@ export default function TestSessionDetail() {
   useEffect(() => {
     if (token) load();
   }, [token, id]);
+
+  // Called with the raw TestSessionTestResponse from POST .../tests.
+  // Enriched with test_code/test_name/category from testDefinitions (which
+  // report-data's join normally provides) so SessionTestCard can render it
+  // identically to a server-seeded test, with no refetch.
+  function handleTestAdded(newSessionTest) {
+    const def = testDefinitions.find((t) => t.test_definition_id === newSessionTest.test_definition_id);
+    setTests((prev) => [
+      ...prev,
+      {
+        ...newSessionTest,
+        test_code: def?.test_code,
+        test_name: def?.test_name,
+        category: def?.category,
+        observations: [],
+        results: [],
+      },
+    ]);
+  }
+
+  // Called with the raw ObservationResponse from POST .../observations.
+  function handleObservationAdded(sessionTestId, observation) {
+    setTests((prev) =>
+      prev.map((t) =>
+        t.session_test_id === sessionTestId
+          ? { ...t, observations: [...(t.observations || []), observation] }
+          : t
+      )
+    );
+  }
+
+  // Called with the `result` object from POST .../calculation-result's
+  // response (already shaped like a TestResult row — see CalculationForm).
+  function handleCalculationSaved(sessionTestId, result) {
+    setTests((prev) =>
+      prev.map((t) =>
+        t.session_test_id === sessionTestId
+          ? { ...t, result: result.pass_fail, results: [...(t.results || []), result] }
+          : t
+      )
+    );
+  }
 
   async function handleStatusChange(newStatus) {
     setActionError("");
@@ -143,13 +192,19 @@ export default function TestSessionDetail() {
 
       <EnvironmentalConditions sessionId={id} token={token} />
 
-      <AddTestPanel sessionId={id} token={token} testDefinitions={testDefinitions} onAdded={load} />
+      <AddTestPanel sessionId={id} token={token} testDefinitions={testDefinitions} onAdded={handleTestAdded} />
 
       <div className="space-y-4">
-        {(reportData?.tests || []).map((t) => (
-          <SessionTestCard key={t.session_test_id} test={t} token={token} onChanged={load} />
+        {tests.map((t) => (
+          <SessionTestCard
+            key={t.session_test_id}
+            test={t}
+            token={token}
+            onObservationAdded={handleObservationAdded}
+            onCalculationSaved={handleCalculationSaved}
+          />
         ))}
-        {(!reportData?.tests || reportData.tests.length === 0) && (
+        {tests.length === 0 && (
           <p className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
             No tests added yet — add one above.
           </p>
@@ -218,6 +273,155 @@ function EnvironmentalConditions({ sessionId, token }) {
   );
 }
 
+/**
+ * Submits { inputs: {...} } to POST .../calculation-result — the backend's
+ * R76 engine computes measured_value/mpe_value/error_value/pass_fail
+ * itself now (see backend/app/services/calculation_engine/). WP and ZR get
+ * dedicated forms since their shapes are simple and representative; every
+ * other test code falls back to a JSON textarea pre-filled with an accurate
+ * template (see src/lib/calculationTemplates.js) since each has a very
+ * specific, OIML-prescribed structure/cardinality.
+ *
+ * KNOWN ISSUE (backend, not fixable from here): the engine strictly requires
+ * Python Decimal instances and the API currently passes raw JSON numbers
+ * straight through — so submitting any of these will likely 422 with
+ * something like "indicated_value must be a Decimal" until the backend adds
+ * a JSON→Decimal conversion step in calculation_routes.py before calling
+ * engine.calculate(). This form is correct and ready for when that lands.
+ */
+function CalculationForm({ sessionTestId, testCode, token, onSaved }) {
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const isDedicated = DEDICATED_FORM_TEST_CODES.includes(testCode);
+
+  async function submitInputs(inputs) {
+    setError("");
+    setSubmitting(true);
+    try {
+      const response = await api.saveCalculationResult(sessionTestId, { inputs }, token);
+      // response.result already matches the TestResult row shape
+      // (measured_value/mpe_value/error_value/pass_fail/result_summary) —
+      // pass it straight up so the parent can merge it into local state
+      // without a refetch.
+      onSaved(response.result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (testCode === "WP") return <WeighingPerformanceForm onSubmit={submitInputs} submitting={submitting} error={error} />;
+  if (testCode === "ZR") return <ZeroReturnForm onSubmit={submitInputs} submitting={submitting} error={error} />;
+  return <GenericJsonForm testCode={testCode} onSubmit={submitInputs} submitting={submitting} error={error} />;
+}
+
+function WeighingPerformanceForm({ onSubmit, submitting, error }) {
+  const [rows, setRows] = useState([{ load: "", indication: "", additional_load: "0", zero_error: "0" }]);
+
+  function updateRow(i, key, value) {
+    setRows((r) => r.map((row, idx) => (idx === i ? { ...row, [key]: value } : row)));
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    onSubmit({
+      measurements: rows.map((r) => ({
+        load: Number(r.load),
+        indication: Number(r.indication),
+        additional_load: Number(r.additional_load || 0),
+        zero_error: Number(r.zero_error || 0),
+      })),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2">
+      {rows.map((row, i) => (
+        <div key={i} className="grid grid-cols-5 gap-2">
+          <input type="number" step="any" placeholder="Load" value={row.load} onChange={(e) => updateRow(i, "load", e.target.value)} required className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+          <input type="number" step="any" placeholder="Indication" value={row.indication} onChange={(e) => updateRow(i, "indication", e.target.value)} required className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+          <input type="number" step="any" placeholder="Additional load" value={row.additional_load} onChange={(e) => updateRow(i, "additional_load", e.target.value)} className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+          <input type="number" step="any" placeholder="Zero error" value={row.zero_error} onChange={(e) => updateRow(i, "zero_error", e.target.value)} className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+          {rows.length > 1 && (
+            <button type="button" onClick={() => setRows((r) => r.filter((_, idx) => idx !== i))} className="text-xs text-status-fail">Remove</button>
+          )}
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <Button type="button" size="sm" variant="secondary" onClick={() => setRows((r) => [...r, { load: "", indication: "", additional_load: "0", zero_error: "0" }])}>
+          <Plus className="h-3.5 w-3.5" /> Add measurement
+        </Button>
+        <Button type="submit" size="sm" disabled={submitting}>{submitting ? "Calculating…" : "Run calculation"}</Button>
+      </div>
+      {error && <p className="text-xs text-status-fail">{error}</p>}
+    </form>
+  );
+}
+
+function ZeroReturnForm({ onSubmit, submitting, error }) {
+  const [values, setValues] = useState({ load: "", zero_before: "", zero_after: "", automatic_zero_tracking_disabled: true });
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    onSubmit({
+      load: Number(values.load),
+      zero_before: Number(values.zero_before),
+      zero_after: Number(values.zero_after),
+      automatic_zero_tracking_disabled: values.automatic_zero_tracking_disabled,
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="grid gap-2 sm:grid-cols-4">
+      <input type="number" step="any" placeholder="Load" value={values.load} onChange={(e) => setValues((v) => ({ ...v, load: e.target.value }))} required className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+      <input type="number" step="any" placeholder="Zero before" value={values.zero_before} onChange={(e) => setValues((v) => ({ ...v, zero_before: e.target.value }))} required className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+      <input type="number" step="any" placeholder="Zero after" value={values.zero_after} onChange={(e) => setValues((v) => ({ ...v, zero_after: e.target.value }))} required className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
+      <Button type="submit" size="sm" disabled={submitting}>{submitting ? "Calculating…" : "Run calculation"}</Button>
+      <label className="col-span-full flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={values.automatic_zero_tracking_disabled} onChange={(e) => setValues((v) => ({ ...v, automatic_zero_tracking_disabled: e.target.checked }))} />
+        Automatic zero-tracking disabled during this test (required by §3.9.4.2)
+      </label>
+      {error && <p className="col-span-full text-xs text-status-fail">{error}</p>}
+    </form>
+  );
+}
+
+function GenericJsonForm({ testCode, onSubmit, submitting, error }) {
+  const template = TEST_INPUT_TEMPLATES[testCode];
+  const [text, setText] = useState(template ? JSON.stringify(template, null, 2) : "{\n  \n}");
+  const [parseError, setParseError] = useState("");
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    setParseError("");
+    try {
+      const parsed = JSON.parse(text);
+      onSubmit(parsed);
+    } catch (err) {
+      setParseError("Invalid JSON: " + err.message);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2">
+      {!template && (
+        <p className="text-xs text-status-pending">
+          No template available for test code "{testCode}" — check the engine source for its expected shape.
+        </p>
+      )}
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.min(16, text.split("\n").length + 1)}
+        className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
+      />
+      <Button type="submit" size="sm" disabled={submitting}>{submitting ? "Calculating…" : "Run calculation"}</Button>
+      {(parseError || error) && <p className="text-xs text-status-fail">{parseError || error}</p>}
+    </form>
+  );
+}
+
 function AddTestPanel({ sessionId, token, testDefinitions, onAdded }) {
   const [error, setError] = useState("");
   const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm({
@@ -227,9 +431,9 @@ function AddTestPanel({ sessionId, token, testDefinitions, onAdded }) {
   async function onSubmit(values) {
     setError("");
     try {
-      await api.addTestToSession(sessionId, values, token);
+      const created = await api.addTestToSession(sessionId, values, token);
       reset({ applicability_status: "APPLICABLE" });
-      onAdded();
+      onAdded(created);
     } catch (err) {
       setError(err.message);
     }
@@ -261,11 +465,9 @@ function AddTestPanel({ sessionId, token, testDefinitions, onAdded }) {
   );
 }
 
-function SessionTestCard({ test, token, onChanged }) {
+function SessionTestCard({ test, token, onObservationAdded, onCalculationSaved }) {
   const [obsError, setObsError] = useState("");
-  const [calcError, setCalcError] = useState("");
   const obsForm = useForm();
-  const calcForm = useForm();
   const hasResult = test.results && test.results.length > 0;
   const latestResult = hasResult ? test.results[test.results.length - 1] : null;
 
@@ -276,30 +478,11 @@ function SessionTestCard({ test, token, onChanged }) {
         ...values,
         value_numeric: values.value_numeric === "" ? undefined : Number(values.value_numeric),
       };
-      await api.addObservation(test.session_test_id, payload, token);
+      const created = await api.addObservation(test.session_test_id, payload, token);
       obsForm.reset();
-      onChanged();
+      onObservationAdded(test.session_test_id, created);
     } catch (err) {
       setObsError(err.message);
-    }
-  }
-
-  // Manual entry until the OIML calculation engine (MPE lookup + pass/fail)
-  // is wired in server-side — this form just records whatever the tester
-  // enters, matching what POST .../calculation-result currently accepts.
-  async function onSaveCalculation(values) {
-    setCalcError("");
-    try {
-      const payload = Object.fromEntries(
-        Object.entries(values)
-          .filter(([, v]) => v !== "")
-          .map(([k, v]) => [k, ["measured_value", "mpe_value", "error_value", "corrected_error"].includes(k) ? Number(v) : v])
-      );
-      await api.saveCalculationResult(test.session_test_id, payload, token);
-      calcForm.reset();
-      onChanged();
-    } catch (err) {
-      setCalcError(err.message);
     }
   }
 
@@ -345,7 +528,7 @@ function SessionTestCard({ test, token, onChanged }) {
 
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Calculation result {latestResult && "(recorded)"}
+                  Calculation {latestResult && "(computed by R76 engine)"}
                 </p>
                 {latestResult ? (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted/50 p-3 text-xs sm:grid-cols-4">
@@ -353,22 +536,18 @@ function SessionTestCard({ test, token, onChanged }) {
                     <span>MPE: <span className="font-num">{latestResult.mpe_value ?? "—"}</span></span>
                     <span>Error: <span className="font-num">{latestResult.error_value ?? "—"}</span></span>
                     <span>Result: <span className="font-num">{latestResult.pass_fail ?? "—"}</span></span>
+                    {latestResult.result_summary && (
+                      <span className="col-span-full text-muted-foreground">{latestResult.result_summary}</span>
+                    )}
                   </div>
                 ) : (
-                  <form onSubmit={calcForm.handleSubmit(onSaveCalculation)} className="grid gap-2 sm:grid-cols-3">
-                    <input type="number" step="any" placeholder="Measured value" {...calcForm.register("measured_value")} className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
-                    <input type="number" step="any" placeholder="MPE value" {...calcForm.register("mpe_value")} className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
-                    <input type="number" step="any" placeholder="Error value" {...calcForm.register("error_value")} className="rounded-lg border border-input bg-background px-3 py-2 text-xs" />
-                    <select {...calcForm.register("pass_fail", { required: true })} className="rounded-lg border border-input bg-background px-3 py-2 text-xs">
-                      <option value="">Pass/Fail…</option>
-                      <option value="PASS">PASS</option>
-                      <option value="FAIL">FAIL</option>
-                    </select>
-                    <input placeholder="Result summary (optional)" {...calcForm.register("result_summary")} className="rounded-lg border border-input bg-background px-3 py-2 text-xs sm:col-span-1" />
-                    <Button type="submit" size="sm" disabled={calcForm.formState.isSubmitting}>Save result</Button>
-                  </form>
+                  <CalculationForm
+                    sessionTestId={test.session_test_id}
+                    testCode={test.test_code}
+                    token={token}
+                    onSaved={(result) => onCalculationSaved(test.session_test_id, result)}
+                  />
                 )}
-                {calcError && <p className="mt-1 text-xs text-status-fail">{calcError}</p>}
               </div>
             </>
           )}

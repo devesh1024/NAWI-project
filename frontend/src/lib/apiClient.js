@@ -148,6 +148,8 @@ export const api = {
     request(`/api/test-sessions/${testSessionId}/report/download-docx`, { token, raw: true }),
   downloadPdf: (testSessionId, token) =>
     request(`/api/test-sessions/${testSessionId}/report/download-pdf`, { token, raw: true }),
+  getAuditLogs: (token) => request("/api/audit-logs", { token }),
+
   approveReport: (testSessionId, token) =>
     request(`/api/test-sessions/${testSessionId}/approve-report`, { method: "PATCH", token }),
 };

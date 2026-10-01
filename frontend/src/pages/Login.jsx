@@ -3,10 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { FlaskConical } from "lucide-react";
+import { FlaskConical, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { DEMO_CREDENTIALS } from "@/lib/devAuth";
 import { Button } from "@/components/ui/Button";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { EclipseGlow } from "@/components/effects/EclipseGlow";
 import { BrandLogo } from "@/components/layout/BrandLogo";
 
@@ -45,6 +46,9 @@ export default function Login() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
       <EclipseGlow />
       <div className="relative w-full max-w-sm rounded-2xl border border-border bg-surface p-8 shadow-raised">
+        <Link to="/" className="mb-4 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" data-cursor-hover>
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to home
+        </Link>
         <BrandLogo className="mb-6" />
         <h1 className="text-xl font-semibold">Login to your lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -78,10 +82,9 @@ export default function Login() {
           </div>
           <div>
             <label className="text-sm font-medium">Password</label>
-            <input
-              type="password"
+            <PasswordInput
               {...register("password")}
-              className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="mt-1"
               placeholder="••••••••"
             />
             {errors.password && <p className="mt-1 text-xs text-status-fail">{errors.password.message}</p>}
