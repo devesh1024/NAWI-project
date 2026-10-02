@@ -12,6 +12,16 @@ class TestSessionCreate(BaseModel):
     remarks: Optional[str] = None
 
 
+class TestSessionUpdate(BaseModel):
+    """Editable fields. Omitted fields are left unchanged."""
+    instrument_id: Optional[UUID] = None
+    standard_id: Optional[UUID] = None
+    session_number: Optional[str] = None
+    application_number: Optional[str] = None
+    test_type: Optional[str] = None
+    remarks: Optional[str] = None
+
+
 class TestSessionResponse(BaseModel):
     test_session_id: UUID
     laboratory_id: UUID

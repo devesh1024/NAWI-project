@@ -19,3 +19,4 @@ from .report_version import ReportVersion
 from .attachment import Attachment
 from .audit_log import AuditLog
 from .digital_signature import DigitalSignature
+from .chat import ChatConversation, ChatMessage

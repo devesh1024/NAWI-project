@@ -2,6 +2,7 @@ import logging
 import os
 from pathlib import Path
 
+import socketio
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.auth.routes import router as auth_router
 from backend.app.api.instruments.routes import router as instruments_router
 from backend.app.api.test_sessions.routes import router as test_sessions_router
+from backend.app.api.test_sessions.management_routes import router as test_session_management_router
 from backend.app.api.test_sessions.test_routes import router as test_session_tests_router
 from backend.app.api.observations.routes import router as observations_router
 from backend.app.api.test_sessions.calculation_routes import (
     router as calculation_router,
 )
 from backend.app.api.reports.routes import router as reports_router
+from backend.app.api.reports.management_routes import router as report_management_router
 from backend.app.api.laboratories.router import router as laboratories_router
 from backend.app.api.users.router import router as users_router
 from backend.app.api.standards.router import router as standards_router
@@ -29,14 +32,27 @@ from backend.app.api.environmental_conditions.routes import (
 from backend.app.api.test_equipment.routes import (
     router as test_equipment_router,
 )
-
+from backend.app.api.chat.routes import router as chat_router
+from backend.app.api.verify.routes import router as verify_router
+from backend.app.services.verification.signing import ensure_signing_identity
+from backend.app.realtime.socketio_server import sio
+from backend.app.database.connection import Base, engine
+import backend.app.models
 
 # Load environment variables from backend/.env locally.
 # Real environment variables (e.g. Render) take precedence.
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
+# Make sure the report-signing key/cert exist (auto-generated on first run, or
+# loaded from SIGNING_KEY_PEM / SIGNING_CERT_PEM). Never block app startup on it.
+try:
+    ensure_signing_identity()
+except Exception as exc:  # pragma: no cover
+    logging.getLogger("uvicorn.error").error("Report signing key unavailable: %s", exc)
+
 logger = logging.getLogger("uvicorn.error")
 
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="NAWI Test Report Generation API",
@@ -123,10 +139,12 @@ app.include_router(auth_router)
 app.include_router(instruments_router)
 app.include_router(laboratories_router)
 app.include_router(test_sessions_router)
+app.include_router(test_session_management_router)
 app.include_router(test_session_tests_router)
 app.include_router(observations_router)
 app.include_router(calculation_router)
 app.include_router(reports_router)
+app.include_router(report_management_router)
 app.include_router(users_router)
 app.include_router(standards_router)
 app.include_router(test_definitions_router)
@@ -134,6 +152,21 @@ app.include_router(test_applicability_rules_router)
 app.include_router(mpe_rules_router)
 app.include_router(environmental_conditions_router)
 app.include_router(test_equipment_router)
+app.include_router(chat_router)
+
+# Public report verification - intentionally NO auth dependency (see api/verify/routes.py).
+app.include_router(verify_router)
+
+
+# -------------------------------------------------------------------
+# TeamDesk real-time chat (Socket.IO) at /socket.io
+#
+# Mounted on the FastAPI app so the start command stays
+#   uvicorn backend.app.main:app
+# CORS for it comes from the CORSMiddleware above.
+# -------------------------------------------------------------------
+
+app.mount("/socket.io", socketio.ASGIApp(sio, socketio_path=""))
 
 
 # -------------------------------------------------------------------

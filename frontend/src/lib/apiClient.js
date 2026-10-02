@@ -71,6 +71,28 @@ export const api = {
 
   // ---- My profile / laboratory --------------------------------------------
   getMyProfile: (token) => request("/api/users/me", { token }),
+
+  // ---- TeamDesk chat --------------------------------------------------------
+  searchChatUsers: (q, token) =>
+    request(`/api/chat/users?q=${encodeURIComponent(q)}`, { token }),
+  listConversations: (token) => request("/api/chat/conversations", { token }),
+  openConversation: (userId, token) =>
+    request("/api/chat/conversations", { method: "POST", body: { user_id: userId }, token }),
+  listChatMessages: (conversationId, { before, limit = 50 } = {}, token) =>
+    request(
+      `/api/chat/conversations/${conversationId}/messages?limit=${limit}` +
+        (before ? `&before=${encodeURIComponent(before)}` : ""),
+      { token }
+    ),
+  // HTTP fallbacks, used only while the socket is disconnected
+  sendChatMessage: (conversationId, body, token) =>
+    request(`/api/chat/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: { body },
+      token,
+    }),
+  markConversationRead: (conversationId, token) =>
+    request(`/api/chat/conversations/${conversationId}/read`, { method: "POST", token }),
   updateMyProfile: (data, token) => request("/api/users/me", { method: "PUT", body: data, token }),
   getMyLaboratory: (token) => request("/api/laboratories/me", { token }),
   updateMyLaboratory: (data, token) => request("/api/laboratories/me", { method: "PUT", body: data, token }),
@@ -86,6 +108,8 @@ export const api = {
     request("/api/instruments", { method: "POST", body: data, token }),
   updateInstrument: (id, data, token) =>
     request(`/api/instruments/${id}`, { method: "PUT", body: data, token }),
+  deleteInstrument: (id, token) =>
+    request(`/api/instruments/${id}`, { method: "DELETE", token }),
 
   // ---- Standards / test definitions / applicability / MPE (admin) -----------
   getStandards: (token) => request("/api/standards", { token }),
@@ -122,6 +146,10 @@ export const api = {
   getTestSession: (id, token) => request(`/api/test-sessions/${id}`, { token }),
   createTestSession: (data, token) =>
     request("/api/test-sessions", { method: "POST", body: data, token }),
+  updateTestSession: (id, data, token) =>
+    request(`/api/test-sessions/${id}`, { method: "PUT", body: data, token }),
+  deleteTestSession: (id, token) =>
+    request(`/api/test-sessions/${id}`, { method: "DELETE", token }),
   updateTestSessionStatus: (id, status, token) =>
     request(`/api/test-sessions/${id}/status`, { method: "PATCH", body: { status }, token }),
 
@@ -140,6 +168,11 @@ export const api = {
     request(`/api/environmental-conditions/session/${testSessionId}`, { token }),
 
   // ---- Reports --------------------------------------------------------------
+  getReports: (token) => request("/api/reports", { token }),
+  updateReport: (reportId, data, token) =>
+    request(`/api/reports/${reportId}`, { method: "PUT", body: data, token }),
+  deleteReport: (reportId, token) =>
+    request(`/api/reports/${reportId}`, { method: "DELETE", token }),
   getReportData: (testSessionId, token) =>
     request(`/api/test-sessions/${testSessionId}/report-data`, { token }),
   generateReport: (testSessionId, token) =>
@@ -152,6 +185,28 @@ export const api = {
 
   approveReport: (testSessionId, token) =>
     request(`/api/test-sessions/${testSessionId}/approve-report`, { method: "PATCH", token }),
+
+  // ---- Public report verification (no auth: anyone can check a report) ------
+  // QR-scan path: pure DB lookup, no file involved.
+  verifyReportById: (testSessionId) => request(`/api/verify-report/${testSessionId}`),
+  // Upload path: PDF gets a real signature check, DOCX a metadata-only check.
+  // Multipart, so this can't go through request() (which JSON-encodes bodies).
+  verifyReportUpload: async (file) => {
+    if (!API_URL) {
+      throw new Error(
+        "VITE_API_URL is not set for this build. Set it to the backend URL in the " +
+          "hosting environment variables and redeploy."
+      );
+    }
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_URL}/api/verify-report/upload`, { method: "POST", body: form });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || res.statusText);
+    }
+    return res.json();
+  },
 };
 
 export { API_URL, downloadResponse };

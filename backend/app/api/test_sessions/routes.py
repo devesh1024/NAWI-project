@@ -43,6 +43,13 @@ def create_test_session(
             detail="Instrument not found"
         )
 
+    if (instrument.status or "").upper() == "INACTIVE":
+        raise HTTPException(
+            status_code=409,
+            detail="This instrument is INACTIVE; reactivate it before "
+                   "creating new test sessions."
+        )
+
     session = TestSession(
         laboratory_id=current_user.laboratory_id,
         instrument_id=data.instrument_id,

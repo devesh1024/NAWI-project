@@ -20,6 +20,7 @@ export function MarketingNav() {
           <a href="#workflow" className="hover:text-foreground">How it works</a>
           <a href="#capabilities" className="hover:text-foreground">Capabilities</a>
           <a href="#compliance" className="hover:text-foreground">Compliance</a>
+          <Link to="/verify" className="hover:text-foreground">Verify a report</Link>
         </nav>
         <div className="flex items-center gap-3">
           {session ? (

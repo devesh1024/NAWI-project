@@ -22,7 +22,8 @@ backend/
 - **Build Command**: `pip install -r backend/requirements.txt`
 - **Start Command**: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
 - **Environment variables required**: `DATABASE_URL`, `JWT_SECRET_KEY`,
-  `CORS_ORIGINS` — see `.env.example` in this folder for the exact format
+  `CORS_ORIGINS`, `FRONTEND_URL`, plus `SIGNING_KEY_PEM` / `SIGNING_CERT_PEM` (see
+  "Report verification" below) — see `.env.example` in this folder for the exact format
   each needs (the `DATABASE_URL` driver prefix in particular — `+psycopg2` is
   required, a bare `postgresql://` will crash on this SQLAlchemy version).
 
@@ -38,6 +39,34 @@ CORS is driven by environment variables — no code edit needed:
 
 If `CORS_ORIGINS` is unset, the API works but the browser will block the
 deployed frontend; the startup log says so.
+
+## Report verification (QR code + signed PDF)
+
+Every generated report carries a QR code linking to `FRONTEND_URL/verify/<test_session_id>`,
+and the PDF is digitally signed (pyHanko) before its hash is stored. The public,
+**unauthenticated** endpoints live in `app/api/verify/routes.py`; signing/QR code in
+`app/services/verification/`.
+
+Three trust levels, deliberately not conflated:
+
+1. **QR scan** — `GET /api/verify-report/{test_session_id}`: DB lookup only. A "light
+   check" that the report exists; does not prove a given copy is unaltered.
+2. **PDF upload** — `POST /api/verify-report/upload`: real signature validation, so any
+   byte-level change since generation is detected.
+3. **DOCX upload** — same endpoint, metadata cross-check only. Word files cannot be
+   tamper-checked and the UI says so.
+
+**Signing key setup is automatic.** On first start the app generates
+`signing_key.pem` + `signing_cert.pem` in `backend/app/services/verification/certs/`
+(git-ignored — never commit the private key) and reuses them afterwards, so plain
+`uvicorn backend.app.main:app --reload` is all you need locally.
+
+**Production (Render):** the disk is ephemeral, so an auto-generated key would change on
+every redeploy and earlier signed reports would stop verifying. Generate one pair once
+(`python -m backend.app.services.verification.signing`, or copy your local `certs/` files)
+and paste the raw PEM text into the `SIGNING_KEY_PEM` / `SIGNING_CERT_PEM` environment
+variables. Also set `FRONTEND_URL` to the deployed Vercel URL (no trailing slash); it
+defaults to `http://localhost:5173`, which would print dead links in production QR codes.
 
 ## Running and testing
 

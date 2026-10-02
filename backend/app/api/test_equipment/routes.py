@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.app.database.connection import get_db
@@ -15,7 +16,9 @@ from backend.app.schemas.test_equipment import (
     TestEquipmentUsageCreate,
     TestEquipmentUsageResponse,
 )
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services.audit_service import create_audit_log
+from backend.app.services.crud_rules import equipment_delete_block_reason
+from backend.app.utils.dependencies import get_current_user, require_lab_admin
 
 
 router = APIRouter(
@@ -102,6 +105,7 @@ def get_equipment(
 def update_equipment(
     equipment_id: UUID,
     data: TestEquipmentUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -122,8 +126,33 @@ def update_equipment(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    # A cleared field arrives as null; refuse it for columns that cannot be null.
+    for field, value in update_data.items():
+        column = TestEquipment.__table__.columns.get(field)
+        if value is None and column is not None and not column.nullable:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field} cannot be empty",
+            )
+
+    old_values = {f: getattr(equipment, f) for f in update_data}
+
     for field, value in update_data.items():
         setattr(equipment, field, value)
+
+    changes = {f: v for f, v in update_data.items() if old_values[f] != v}
+
+    if changes:
+        create_audit_log(
+            db=db,
+            current_user=current_user,
+            entity_type="TEST_EQUIPMENT",
+            entity_id=equipment.equipment_id,
+            action="UPDATE",
+            old_value={f: old_values[f] for f in changes},
+            new_value=changes,
+            request=request,
+        )
 
     db.commit()
     db.refresh(equipment)
@@ -136,8 +165,9 @@ def update_equipment(
 )
 def delete_equipment(
     equipment_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_lab_admin),
 ):
     equipment = (
         db.query(TestEquipment)
@@ -153,6 +183,33 @@ def delete_equipment(
             status_code=404,
             detail="Test equipment not found",
         )
+
+    # Usage rows cascade from equipment at the database level, so deleting
+    # used equipment would silently erase which standards each result was
+    # measured with. Refuse instead.
+    usage_count = (
+        db.query(func.count(TestEquipmentUsage.usage_id))
+        .filter(TestEquipmentUsage.equipment_id == equipment.equipment_id)
+        .scalar()
+    )
+
+    reason = equipment_delete_block_reason(usage_count)
+
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
+
+    create_audit_log(
+        db=db,
+        current_user=current_user,
+        entity_type="TEST_EQUIPMENT",
+        entity_id=equipment.equipment_id,
+        action="DELETE",
+        old_value={
+            "equipment_code": equipment.equipment_code,
+            "equipment_name": equipment.equipment_name,
+        },
+        request=request,
+    )
 
     db.delete(equipment)
     db.commit()

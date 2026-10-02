@@ -31,6 +31,7 @@ from backend.app.models.audit_log import AuditLog
 from backend.app.utils.dependencies import get_current_user
 from backend.app.services.report_generation.report_generator import create_report
 from backend.app.services.report_generation.pdf_generator import create_pdf
+from backend.app.services.verification.signing import sign_pdf_file
 
 
 router = APIRouter(
@@ -745,6 +746,13 @@ def generate_report(
         report_data,
         output_path=str(pdf_output_path)
     )
+
+    # Sign in place: read the plain PDF just written, overwrite it with a
+    # digitally-signed version. Must happen before hashing below, so the
+    # stored report_hash matches what a verifier will actually check against.
+    signed_tmp_path = str(pdf_output_path) + ".signed"
+    sign_pdf_file(str(pdf_output_path), signed_tmp_path)
+    Path(signed_tmp_path).replace(pdf_output_path)
 
     # The hash is calculated from the generated PDF, which is the final
     # fixed-format report artifact delivered to the user.

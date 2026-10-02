@@ -75,6 +75,13 @@ export default function Landing() {
                 <Link to="/register">Register your laboratory</Link>
               </Button>
             </div>
+            <p className="mt-5 text-sm text-muted-foreground">
+              Received a NAWI report and want to check it's genuine?{" "}
+              <Link to="/verify" className="font-medium text-primary hover:underline">
+                Verify a report
+              </Link>{" "}
+              — no account needed.
+            </p>
           </motion.div>
         </div>
       </section>

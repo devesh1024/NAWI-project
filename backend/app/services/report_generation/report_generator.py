@@ -6,6 +6,7 @@ Consumes the `data` dictionary exactly as returned by the
 formatted, print-ready DOCX laboratory test report.
 """
 
+import io
 from datetime import datetime
 
 from docx import Document
@@ -18,6 +19,7 @@ from docx.oxml import OxmlElement
 from docx.shared import Emu
 
 from .sample_report_data import sample_report_data
+from backend.app.services.verification.qr_utils import generate_qr_png_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +673,14 @@ def _build_masthead(document, data):
         "Email",
         laboratory["email"]
     )
+
+    # Verification QR: right-aligned inside the Laboratory cell, i.e. to the
+    # right of the lab's own text. _build_masthead runs once (top of page 1).
+    qr_bytes = generate_qr_png_bytes(data["test_session"]["test_session_id"])
+    qr_paragraph = left_cell.add_paragraph()
+    qr_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    qr_run = qr_paragraph.add_run()
+    qr_run.add_picture(io.BytesIO(qr_bytes), width=Inches(0.8))
 
     right_cell.paragraphs[0].text = ""
 
@@ -1508,6 +1518,13 @@ def create_report(
     output_path="NAWI_Test_Report.docx"
 ):
     document = Document()
+
+    # python-docx only exposes the standard Dublin-Core properties, so `subject`
+    # is reused the same way the PDF does, as a cross-format lookup key for
+    # /api/verify-report/upload. DOCX cannot be digitally signed like the PDF.
+    test_session_id = data["test_session"]["test_session_id"]
+    report_number = (data.get("report") or {}).get("report_number") or ""
+    document.core_properties.subject = f"NAWI-VERIFY:{test_session_id}:{report_number}"
 
     section = document.sections[0]
 

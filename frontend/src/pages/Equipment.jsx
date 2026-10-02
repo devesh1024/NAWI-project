@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useForm } from "react-hook-form";
-import { Plus, X, Trash2 } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { RowActions } from "@/components/ui/RowActions";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/lib/apiClient";
 
@@ -13,13 +14,38 @@ const CALIBRATION_STATUS_STYLES = {
   OVERDUE: "bg-status-fail/10 text-status-fail",
 };
 
+const EMPTY_VALUES = {
+  equipment_name: "",
+  model: "",
+  serial_number: "",
+  calibration_status: "",
+  calibration_date: "",
+  calibration_due_date: "",
+};
+
+const toDateInput = (value) => (value ? String(value).slice(0, 10) : "");
+
+function toFormValues(eq) {
+  return {
+    equipment_name: eq.equipment_name ?? "",
+    model: eq.model ?? "",
+    serial_number: eq.serial_number ?? "",
+    calibration_status: eq.calibration_status ?? "",
+    calibration_date: toDateInput(eq.calibration_date),
+    calibration_due_date: toDateInput(eq.calibration_due_date),
+  };
+}
+
 export default function Equipment() {
-  const { token } = useAuth();
+  const { token, role } = useAuth();
+  const isAdmin = role === "LAB_ADMIN";
   const [equipment, setEquipment] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [editing, setEditing] = useState(null); // equipment being edited, null = adding
+  const [actionError, setActionError] = useState("");
   const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm();
 
   async function load() {
@@ -38,28 +64,56 @@ export default function Equipment() {
     if (token) load();
   }, [token]);
 
+  function openCreate() {
+    setEditing(null);
+    setSubmitError("");
+    reset(EMPTY_VALUES);
+    setShowForm(true);
+  }
+
+  function openEdit(eq) {
+    setEditing(eq);
+    setSubmitError("");
+    reset(toFormValues(eq));
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setEditing(null);
+  }
+
   async function onSubmit(values) {
     setSubmitError("");
     try {
-      const payload = Object.fromEntries(
-        Object.entries(values).filter(([, v]) => v !== "")
-      );
-      await api.createTestEquipment(payload, token);
-      reset();
-      setShowForm(false);
+      if (editing) {
+        // A cleared optional field is sent as null so it is really cleared.
+        const payload = Object.fromEntries(
+          Object.entries(values).map(([k, v]) => [k, v === "" && k !== "equipment_name" ? null : v])
+        );
+        await api.updateTestEquipment(editing.equipment_id, payload, token);
+      } else {
+        const payload = Object.fromEntries(
+          Object.entries(values).filter(([, v]) => v !== "")
+        );
+        await api.createTestEquipment(payload, token);
+      }
+      reset(EMPTY_VALUES);
+      closeForm();
       load();
     } catch (err) {
       setSubmitError(err.message);
     }
   }
 
-  async function handleDelete(id) {
-    if (!confirm("Delete this equipment record?")) return;
+  async function handleDelete(eq) {
+    if (!window.confirm(`Delete equipment "${eq.equipment_name}"?\n\nThis cannot be undone.`)) return;
+    setActionError("");
     try {
-      await api.deleteTestEquipment(id, token);
+      await api.deleteTestEquipment(eq.equipment_id, token);
       load();
     } catch (err) {
-      alert(err.message);
+      setActionError(err.message); // e.g. "recorded as used in N test(s)..."
     }
   }
 
@@ -70,7 +124,7 @@ export default function Equipment() {
           <h1 className="text-2xl font-semibold">Equipment</h1>
           <p className="text-sm text-muted-foreground">Lab test equipment and calibration status.</p>
         </div>
-        <Button onClick={() => setShowForm(true)}>
+        <Button onClick={openCreate}>
           <Plus className="h-4 w-4" /> Add equipment
         </Button>
       </div>
@@ -79,6 +133,10 @@ export default function Equipment() {
           (POST /api/test-equipment/{id}/assign, per her router) isn't wired
           to any UI yet — the natural place is from within a test session's
           test row, once that flow exists. The endpoint is ready. */}
+
+      {actionError && (
+        <p className="rounded-lg bg-status-fail/10 px-3 py-2 text-sm text-status-fail">{actionError}</p>
+      )}
 
       <Card>
         <CardContent className="pt-5">
@@ -119,10 +177,8 @@ export default function Equipment() {
                     <td className="py-2.5 font-num text-xs text-muted-foreground">
                       {eq.calibration_due_date ? new Date(eq.calibration_due_date).toLocaleDateString() : "—"}
                     </td>
-                    <td className="py-2.5 text-right">
-                      <button onClick={() => handleDelete(eq.equipment_id)} data-cursor-hover>
-                        <Trash2 className="h-4 w-4 text-muted-foreground hover:text-status-fail" />
-                      </button>
+                    <td className="py-2.5">
+                      <RowActions onEdit={() => openEdit(eq)} onDelete={isAdmin ? () => handleDelete(eq) : null} />
                     </td>
                   </motion.tr>
                 ))}
@@ -139,7 +195,7 @@ export default function Equipment() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-            onClick={() => setShowForm(false)}
+            onClick={closeForm}
           >
             <motion.div
               initial={{ opacity: 0, y: 16, scale: 0.98 }}
@@ -150,8 +206,10 @@ export default function Equipment() {
               className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-raised"
             >
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-heading text-lg font-semibold">Add equipment</h2>
-                <button onClick={() => setShowForm(false)} data-cursor-hover>
+                <h2 className="font-heading text-lg font-semibold">
+                  {editing ? "Edit equipment" : "Add equipment"}
+                </h2>
+                <button type="button" onClick={closeForm} data-cursor-hover>
                   <X className="h-5 w-5 text-muted-foreground" />
                 </button>
               </div>
@@ -191,7 +249,7 @@ export default function Equipment() {
                 </div>
                 {submitError && <p className="text-xs text-status-fail">{submitError}</p>}
                 <Button type="submit" className="w-full" disabled={isSubmitting}>
-                  {isSubmitting ? "Saving…" : "Save equipment"}
+                  {isSubmitting ? "Saving…" : editing ? "Save changes" : "Save equipment"}
                 </Button>
               </form>
             </motion.div>

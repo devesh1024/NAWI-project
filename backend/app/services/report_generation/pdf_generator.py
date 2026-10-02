@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,11 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
+    Image,
 )
 from reportlab.pdfbase.pdfmetrics import stringWidth
+
+from backend.app.services.verification.qr_utils import generate_qr_png_bytes
 
 
 # ============================================================
@@ -643,9 +647,14 @@ def build_report_header(data, styles):
         ],
     ]
 
+    # The QR code sits immediately right of the Laboratory block, inside the
+    # same left-hand column. The lab box is narrowed from 82mm to 62mm so the
+    # box (62mm) + QR cell (20mm) still fit that 82mm column.
+    test_session_id = (data.get("test_session") or {}).get("test_session_id")
+
     left_table = Table(
         left_column,
-        colWidths=[82 * mm],
+        colWidths=[62 * mm if test_session_id else 82 * mm],
     )
 
     left_table.setStyle(
@@ -677,8 +686,31 @@ def build_report_header(data, styles):
         )
     )
 
+    if test_session_id:
+        qr_bytes = generate_qr_png_bytes(str(test_session_id))
+        qr_image = Image(io.BytesIO(qr_bytes), width=18 * mm, height=18 * mm)
+
+        left_block = Table(
+            [[left_table, qr_image]],
+            colWidths=[62 * mm, 20 * mm],
+        )
+        left_block.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+    else:
+        left_block = left_table
+
     info_table = Table(
-        [[left_table, right_table]],
+        [[left_block, right_table]],
         colWidths=[85 * mm, 85 * mm],
     )
 
@@ -1504,6 +1536,11 @@ def create_pdf(
 
     styles = build_styles()
 
+    # Verification key: /api/verify-report/upload parses this subject back out
+    # of uploaded PDFs to find which report they correspond to.
+    test_session_id = (data.get("test_session") or {}).get("test_session_id") or ""
+    report_number = (data.get("report") or {}).get("report_number") or ""
+
     document = SimpleDocTemplate(
         str(output_path),
         pagesize=A4,
@@ -1513,7 +1550,7 @@ def create_pdf(
         bottomMargin=18 * mm,
         title="NAWI Test Report",
         author="NAWI Report Generation System",
-        subject="Non-Automatic Weighing Instrument Test Report",
+        subject=f"NAWI-VERIFY:{test_session_id}:{report_number}",
     )
 
     # Make report data available to header/footer.
