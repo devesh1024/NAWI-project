@@ -38,6 +38,7 @@ from backend.app.services.verification.signing import ensure_signing_identity
 from backend.app.realtime.socketio_server import sio
 from backend.app.database.connection import Base, engine
 import backend.app.models
+from backend.app.api.audit_logs.router import router as audit_logs_router
 
 # Load environment variables from backend/.env locally.
 # Real environment variables (e.g. Render) take precedence.
@@ -153,6 +154,7 @@ app.include_router(mpe_rules_router)
 app.include_router(environmental_conditions_router)
 app.include_router(test_equipment_router)
 app.include_router(chat_router)
+app.include_router(audit_logs_router)
 
 # Public report verification - intentionally NO auth dependency (see api/verify/routes.py).
 app.include_router(verify_router)
