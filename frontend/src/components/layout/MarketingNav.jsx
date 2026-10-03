@@ -17,9 +17,9 @@ export function MarketingNav() {
       <div className="container flex h-16 items-center justify-between">
         <BrandLogo />
         <nav className="hidden items-center gap-8 text-sm font-medium text-muted-foreground md:flex">
-          <a href="#workflow" className="hover:text-foreground">How it works</a>
-          <a href="#capabilities" className="hover:text-foreground">Capabilities</a>
-          <a href="#compliance" className="hover:text-foreground">Compliance</a>
+          <a href="/#workflow" className="hover:text-foreground">How it works</a>
+          <a href="/#capabilities" className="hover:text-foreground">Capabilities</a>
+          <a href="/#compliance" className="hover:text-foreground">Compliance</a>
           <Link to="/verify" className="hover:text-foreground">Verify a report</Link>
         </nav>
         <div className="flex items-center gap-3">
