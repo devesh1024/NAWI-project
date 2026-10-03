@@ -145,6 +145,39 @@ export default function TestSessionDetail() {
     }
   }
 
+  async function handleSubmitForReview() {
+    setActionError("");
+    setBusy(true);
+
+    try {
+      await api.updateTestSessionStatus(
+        id,
+        "SUBMITTED",
+        token
+      );
+      await load();
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSubmitForApproval() {
+    setActionError("");
+    setBusy(true);
+
+    try {
+      await api.submitReportForApproval(id, token);
+      await load();
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
   async function handleApprove() {
     setActionError("");
     setBusy(true);
@@ -216,20 +249,89 @@ export default function TestSessionDetail() {
           <CardTitle>Report</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2 pt-0">
+          {role === "TESTER" && session?.status === "IN PROGRESS" && (
+            <Button onClick={handleSubmitForReview} disabled={busy}>
+              <CheckCircle2 className="h-4 w-4" /> Submit for Review
+            </Button>
+          )}
+
+          {role === "REVIEWER" && session?.status === "SUBMITTED" && (
+            <Button onClick={async () => {
+              setActionError("");
+              setBusy(true);
+
+              try {
+                await api.updateTestSessionStatus(id, "UNDER REVIEW", token);
+                await load();
+              } catch (err) {
+                setActionError(err.message);
+              } finally {
+                setBusy(false);
+              }
+            }} disabled={busy}>
+              <CheckCircle2 className="h-4 w-4" /> Start Review
+            </Button>
+          )}
+
+          {role === "REVIEWER" && session?.status === "UNDER REVIEW" && (
+            <Button onClick={handleSubmitForApproval} disabled={busy}>
+              <CheckCircle2 className="h-4 w-4" /> Submit for Approval
+            </Button>
+          )}
+
+          {role === "APPROVER" && report?.report_status === "PENDING_APPROVAL" && (
+            <>
+              <Button
+                variant="accent"
+                onClick={handleApprove}
+                disabled={busy}
+              >
+                <CheckCircle2 className="h-4 w-4" /> Approve Report
+              </Button>
+
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  setActionError("");
+                  setBusy(true);
+
+                  try {
+                    await api.approveReport(id, token, "REJECT");
+                    await load();
+                  } catch (err) {
+                    setActionError(err.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+              >
+                Reject Report
+              </Button>
+            </>
+          )}
+
+          {role === "LAB_ADMIN" && (
+            <Button
+              variant="accent"
+              onClick={handleApprove}
+              disabled={busy}
+            >
+              <CheckCircle2 className="h-4 w-4" /> Approve Report
+            </Button>
+          )}
+
           <Button onClick={handleGenerateReport} disabled={busy}>
             <FileDown className="h-4 w-4" /> Generate report (DOCX)
           </Button>
+
           <Button variant="secondary" onClick={() => handleDownload("pdf")}>
             <FileDown className="h-4 w-4" /> Download PDF
           </Button>
+
           <Button variant="secondary" onClick={() => handleDownload("docx")}>
             <FileDown className="h-4 w-4" /> Download DOCX
           </Button>
-          {canApprove && (
-            <Button variant="accent" onClick={handleApprove} disabled={busy}>
-              <CheckCircle2 className="h-4 w-4" /> Approve report
-            </Button>
-          )}
         </CardContent>
       </Card>
     </div>

@@ -183,8 +183,17 @@ export const api = {
     request(`/api/test-sessions/${testSessionId}/report/download-pdf`, { token, raw: true }),
   getAuditLogs: (token) => request("/api/audit-logs", { token }),
 
-  approveReport: (testSessionId, token) =>
-    request(`/api/test-sessions/${testSessionId}/approve-report`, { method: "PATCH", token }),
+  approveReport: (testSessionId, token, action = "APPROVE") =>
+  request(
+    `/api/test-sessions/${testSessionId}/approve-report?action=${action}`,
+    { method: "PATCH", token }
+  ),
+  
+  submitReportForApproval: (testSessionId, token) =>
+  request(`/api/test-sessions/${testSessionId}/submit-for-approval`, {
+    method: "PATCH",
+    token,
+  }),
 
   // ---- Public report verification (no auth: anyone can check a report) ------
   // QR-scan path: pure DB lookup, no file involved.

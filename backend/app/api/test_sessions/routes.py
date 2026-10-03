@@ -144,11 +144,64 @@ def update_test_session_status(
             detail=f"Invalid status. Allowed values: {sorted(allowed_statuses)}"
         )
 
-    # Update session status
-    session.status = data.status
+    current_status = session.status
+    new_status = data.status
+    role = current_user.role
 
-    # Calculate overall result when the session is submitted
-    if data.status == "SUBMITTED":
+    # A tester can only update sessions assigned to them.
+    if role == "TESTER" and str(session.tester_id) != str(current_user.user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the assigned tester can change this test session status"
+        )
+
+    # Define role-based workflow transitions.
+    if role == "TESTER":
+        allowed_transitions = {
+            "DRAFT": {"IN PROGRESS"},
+            "IN PROGRESS": {"SUBMITTED"},
+        }
+
+    elif role == "REVIEWER":
+        allowed_transitions = {
+            "SUBMITTED": {"UNDER REVIEW"},
+        }
+
+    elif role == "APPROVER":
+        allowed_transitions = {
+            "UNDER REVIEW": {"APPROVED", "REJECTED"},
+        }
+
+    elif role == "LAB_ADMIN":
+        # Lab Admin can manage the complete workflow.
+        allowed_transitions = {
+            "DRAFT": allowed_statuses - {"DRAFT"},
+            "IN PROGRESS": allowed_statuses - {"IN PROGRESS"},
+            "SUBMITTED": allowed_statuses - {"SUBMITTED"},
+            "UNDER REVIEW": allowed_statuses - {"UNDER REVIEW"},
+            "APPROVED": allowed_statuses - {"APPROVED"},
+            "REJECTED": allowed_statuses - {"REJECTED"},
+        }
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to change test session status"
+        )
+
+    if new_status not in allowed_transitions.get(current_status, set()):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Role '{role}' cannot change session status "
+                f"from '{current_status}' to '{new_status}'"
+            )
+        )
+
+    session.status = new_status
+
+    # Calculate overall result when the tester submits the session.
+    if new_status == "SUBMITTED":
 
         session_tests = db.query(TestSessionTest).filter(
             TestSessionTest.test_session_id == session.test_session_id
@@ -160,25 +213,21 @@ def update_test_session_status(
             if test.applicability_status != "NOT_APPLICABLE"
         ]
 
-        # No tests yet
         if not applicable_tests:
             session.overall_result = None
 
-        # Any applicable test failed
         elif any(
             test.result == "FAIL"
             for test in applicable_tests
         ):
             session.overall_result = "FAIL"
 
-        # All applicable tests passed
         elif all(
             test.result == "PASS"
             for test in applicable_tests
         ):
             session.overall_result = "PASS"
 
-        # Tests are still incomplete
         else:
             session.overall_result = None
 

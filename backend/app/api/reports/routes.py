@@ -979,29 +979,109 @@ def download_pdf(
         media_type="application/pdf"
     )
 
+# ============================================================
+# SUBMIT FOR APPROVAL
+# ============================================================
+@router.patch("/{test_session_id}/submit-for-approval")
+def submit_report_for_approval(
+    test_session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "REVIEWER":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a Reviewer can submit a report for approval"
+        )
+
+    session = (
+        db.query(TestSession)
+        .filter(
+            TestSession.test_session_id == test_session_id,
+            TestSession.laboratory_id == current_user.laboratory_id
+        )
+        .first()
+    )
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Test session not found"
+        )
+
+    if session.status != "UNDER REVIEW":
+        raise HTTPException(
+            status_code=400,
+            detail="Only sessions under review can be submitted for approval"
+        )
+
+    report = (
+        db.query(Report)
+        .filter(
+            Report.test_session_id == test_session_id
+        )
+        .order_by(Report.generated_at.desc())
+        .first()
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="No report found for this test session"
+        )
+
+    if report.report_status == "APPROVED":
+        raise HTTPException(
+            status_code=400,
+            detail="An approved report cannot be submitted for approval again"
+        )
+
+    report.report_status = "PENDING_APPROVAL"
+
+    # Record the reviewer responsible for the review.
+    session.reviewer_id = current_user.user_id
+
+    db.commit()
+    db.refresh(report)
+
+    return {
+        "message": "Report submitted for approval successfully",
+        "test_session_id": str(test_session_id),
+        "report_status": report.report_status,
+        "session_status": session.status
+    }
+
+
 
 # ============================================================
-# APPROVE REPORT
+# APPROVE / REJECT REPORT
 # ============================================================
 
 @router.patch("/{test_session_id}/approve-report")
 def approve_report(
     test_session_id: UUID,
     request: Request,
+    action: str = "APPROVE",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     allowed_roles = {
         "LAB_ADMIN",
-        "REVIEWER"
+        "APPROVER"
     }
 
     if current_user.role not in allowed_roles:
         raise HTTPException(
             status_code=403,
-            detail=(
-                "Only a Lab Admin or Reviewer can approve reports"
-            )
+            detail="Only an Approver or Lab Admin can approve or reject reports"
+        )
+
+    action = action.upper()
+
+    if action not in {"APPROVE", "REJECT"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Action must be either APPROVE or REJECT"
         )
 
     session = (
@@ -1038,37 +1118,70 @@ def approve_report(
             detail="Report is already approved"
         )
 
+    if current_user.role == "APPROVER" and report.report_status != "PENDING_APPROVAL":
+        raise HTTPException(
+            status_code=400,
+            detail="Only reports pending approval can be approved or rejected"
+        )
+
     approval_time = datetime.now(timezone.utc)
 
     old_report_status = report.report_status
     old_session_status = session.status
 
-    report.approved_by = current_user.user_id
-    report.approved_at = approval_time
-    report.report_status = "APPROVED"
+    # --------------------------------------------------------
+    # APPROVE
+    # --------------------------------------------------------
 
-    # Application-level approval signature record.
-    # This is NOT a PKI/certificate-based cryptographic signature.
-    signature_data = (
-        f"APPROVED_BY:{current_user.user_id};"
-        f"REPORT_HASH:{report.report_hash or 'NOT_AVAILABLE'}"
-    )
+    if action == "APPROVE":
 
-    digital_signature = DigitalSignature(
-        report_id=report.report_id,
-        user_id=current_user.user_id,
-        signature_type="APPLICATION_APPROVAL",
-        signature_data=signature_data,
-        certificate_id=None,
-        status="SIGNED"
-    )
+        report.approved_by = current_user.user_id
+        report.approved_at = approval_time
+        report.report_status = "APPROVED"
 
-    db.add(digital_signature)
+        signature_data = (
+            f"APPROVED_BY:{current_user.user_id};"
+            f"REPORT_HASH:{report.report_hash or 'NOT_AVAILABLE'}"
+        )
 
-    session.status = "APPROVED"
+        digital_signature = DigitalSignature(
+            report_id=report.report_id,
+            user_id=current_user.user_id,
+            signature_type="APPLICATION_APPROVAL",
+            signature_data=signature_data,
+            certificate_id=None,
+            status="SIGNED"
+        )
+
+        db.add(digital_signature)
+
+        session.status = "APPROVED"
+
+        audit_action = "APPROVE"
+        audit_remarks = (
+            "Report approved. Application-level approval signature "
+            "created; not a PKI/certificate-based cryptographic signature."
+        )
 
     # --------------------------------------------------------
-    # AUDIT: REPORT APPROVAL
+    # REJECT
+    # --------------------------------------------------------
+
+    else:
+
+        report.approved_by = None
+        report.approved_at = None
+        report.report_status = "REJECTED"
+
+        session.status = "REJECTED"
+
+        digital_signature = None
+
+        audit_action = "REJECT"
+        audit_remarks = "Report rejected by Approver."
+
+    # --------------------------------------------------------
+    # AUDIT
     # --------------------------------------------------------
 
     create_audit_log(
@@ -1076,7 +1189,7 @@ def approve_report(
         current_user=current_user,
         entity_type="REPORT",
         entity_id=report.report_id,
-        action="APPROVE",
+        action=audit_action,
         old_value={
             "report_status": old_report_status,
             "test_session_status": old_session_status
@@ -1084,38 +1197,57 @@ def approve_report(
         new_value={
             "report_status": report.report_status,
             "test_session_status": session.status,
-            "approved_by": str(current_user.user_id),
-            "approved_at": approval_time.isoformat(),
+            "approved_by": (
+                str(current_user.user_id)
+                if report.approved_by
+                else None
+            ),
+            "approved_at": (
+                report.approved_at.isoformat()
+                if report.approved_at
+                else None
+            ),
             "report_hash": report.report_hash
         },
-        remarks=(
-            "Report approved. Application-level approval signature "
-            "created; not a PKI/certificate-based cryptographic signature."
-        ),
+        remarks=audit_remarks,
         request=request
     )
 
     db.commit()
     db.refresh(report)
-    db.refresh(digital_signature)
+
+    if digital_signature:
+        db.refresh(digital_signature)
 
     return {
-        "message": "Report approved successfully",
+        "message": (
+            "Report approved successfully"
+            if action == "APPROVE"
+            else "Report rejected successfully"
+        ),
         "report": {
             "report_id": str(report.report_id),
             "report_number": report.report_number,
             "report_version": report.report_version,
             "report_status": report.report_status,
             "overall_result": report.overall_result,
-            "approved_by": str(report.approved_by),
+            "approved_by": (
+                str(report.approved_by)
+                if report.approved_by
+                else None
+            ),
             "approved_at": report.approved_at,
             "report_hash": report.report_hash,
-            "digital_signature": {
-                "signature_id": str(digital_signature.signature_id),
-                "signature_type": digital_signature.signature_type,
-                "status": digital_signature.status,
-                "signed_at": digital_signature.signed_at
-            }
+            "digital_signature": (
+                {
+                    "signature_id": str(digital_signature.signature_id),
+                    "signature_type": digital_signature.signature_type,
+                    "status": digital_signature.status,
+                    "signed_at": digital_signature.signed_at
+                }
+                if digital_signature
+                else None
+            )
         },
         "test_session": {
             "test_session_id": str(session.test_session_id),
