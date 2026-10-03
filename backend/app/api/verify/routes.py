@@ -130,24 +130,50 @@ def _verify_pdf(data: bytes, db: Session) -> dict:
         subject = None
 
     test_session_id = _extract_test_session_id(subject)
+    if not test_session_id:
+        # A damaged/edited PDF may not parse cleanly with pypdf even though the
+        # report ID is still sitting in the file. Fall back to scanning the bytes
+        # so a tampered copy is reported as tampered, not as "unknown report".
+        raw = re.search(rb"NAWI-VERIFY:([0-9a-fA-F-]{36})", data)
+        test_session_id = raw.group(1).decode() if raw else None
     record = _public_record(db, test_session_id) if test_session_id else None
 
     sig_status = verify_pdf_signature(data)
+    signed = sig_status.get("signed")
 
-    if not record:
-        verdict = "NOT_FOUND"
-        message = "This PDF's embedded report ID doesn't match any report in our system."
-    elif sig_status.get("signed") and sig_status.get("bottom_line"):
-        verdict = "AUTHENTIC"
-        message = "Signature valid and file unmodified since generation. This report is authentic."
-    elif sig_status.get("signed") and not sig_status.get("intact"):
+    # NOTE: signed is None (the check itself failed) must NOT be treated like
+    # signed is False (no signature). `not None` is True in Python, which is
+    # exactly how a crash used to be reported as "No signature present".
+    if signed and sig_status.get("trusted") and not sig_status.get("intact"):
         verdict = "TAMPERED"
         message = "This file has been MODIFIED since it was signed. Do not trust its contents."
-    elif not sig_status.get("signed"):
+    elif not record:
+        verdict = "NOT_FOUND"
+        message = "This PDF's embedded report ID doesn't match any report in our system."
+    elif signed is None:
+        verdict = "UNVERIFIABLE"
+        message = (
+            "This PDF's signature could not be checked. The file may be corrupted or "
+            "altered, or the verifier hit an internal error. Do not rely on this copy."
+        )
+    elif signed is False:
         verdict = "UNSIGNED"
         message = (
             "This PDF has no embedded digital signature — either it predates this "
             "feature, or it did not originate from our system's report generator."
+        )
+    elif sig_status.get("bottom_line"):
+        verdict = "AUTHENTIC"
+        message = "Signature valid and file unmodified since generation. This report is authentic."
+    elif not sig_status.get("intact"):
+        verdict = "TAMPERED"
+        message = "This file has been MODIFIED since it was signed. Do not trust its contents."
+    elif not sig_status.get("trusted"):
+        verdict = "UNTRUSTED_SIGNER"
+        message = (
+            "The file is unmodified, but it was not signed with this system's current "
+            "signing key (for example it was signed before the key was replaced, or by "
+            "another party). Its authenticity cannot be confirmed."
         )
     else:
         verdict = "UNVERIFIABLE"

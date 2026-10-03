@@ -53,7 +53,6 @@ except Exception as exc:  # pragma: no cover
 
 logger = logging.getLogger("uvicorn.error")
 
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="NAWI Test Report Generation API",

@@ -19,6 +19,7 @@ const VERDICT_STYLES = {
   TAMPERED: { icon: ShieldAlert, color: "text-status-fail", bg: "bg-status-fail/10", label: "Modified — do not trust" },
   NOT_FOUND: { icon: ShieldAlert, color: "text-status-fail", bg: "bg-status-fail/10", label: "Not found" },
   UNSIGNED: { icon: ShieldAlert, color: "text-status-pending", bg: "bg-status-pending/10", label: "No signature present" },
+  UNTRUSTED_SIGNER: { icon: ShieldAlert, color: "text-status-pending", bg: "bg-status-pending/10", label: "Signer not recognised" },
   UNVERIFIABLE: { icon: ShieldQuestion, color: "text-muted-foreground", bg: "bg-muted", label: "Could not verify" },
 };
 
@@ -48,6 +49,12 @@ function ResultCard({ result }) {
               <span>Trusted: <span className="font-num">{String(result.signature.trusted)}</span></span>
               <span>Valid: <span className="font-num">{String(result.signature.valid)}</span></span>
             </div>
+          )}
+
+          {(result.signature?.reason || result.signature?.error) && (
+            <p className="mt-2 break-words text-xs text-muted-foreground">
+              Detail: {result.signature.reason || result.signature.error}
+            </p>
           )}
 
           {r && (

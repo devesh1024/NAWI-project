@@ -119,39 +119,248 @@ def sign_pdf_file(input_path: str, output_path: str) -> None:
             )
 
 
-def verify_pdf_signature(file_bytes: bytes) -> dict:
-    """
-    Returns {signed, intact, trusted, valid} for an uploaded PDF's bytes.
-    `intact=False` is the key tamper signal: content changed since signing.
-    A PDF with no embedded signature at all (signed=False) is simply one
-    that either predates this feature or never went through our system.
-    """
+# --------------------------------------------------------------------------
+# Verification
+#
+# The check is done directly with `cryptography` rather than through pyHanko's
+# validator. It is the same maths a PDF reader performs, but it has no moving
+# parts: nothing here depends on pyHanko / certvalidator version quirks, and it
+# can be tested without a running server.
+#
+#   1. ByteRange must cover the WHOLE file except the signature hole. Anything
+#      appended or edited after signing is therefore detected.
+#   2. SHA-256 of the covered bytes must equal the CMS messageDigest attribute.
+#   3. The RSA signature over the CMS signed attributes must verify.
+#   4. The signer certificate must be THIS system's certificate (so a PDF
+#      signed by someone else's key is "intact" but not "trusted").
+# --------------------------------------------------------------------------
+import re as _re
+import binascii as _binascii
+
+_BYTERANGE_RE = _re.compile(rb"/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]")
+
+_OID_MESSAGE_DIGEST = bytes.fromhex("2a864886f70d010904")
+_OID_PSS = bytes.fromhex("2a864886f70d01010a")
+_DIGEST_OIDS = {
+    bytes.fromhex("2b0e03021a"): "sha1",
+    bytes.fromhex("608648016503040204"): "sha224",
+    bytes.fromhex("608648016503040201"): "sha256",
+    bytes.fromhex("608648016503040202"): "sha384",
+    bytes.fromhex("608648016503040203"): "sha512",
+}
+
+
+def _tlv(buf: bytes, i: int):
+    """Reads one DER element at offset i -> (tag, content_start, content_end)."""
+    tag = buf[i]
+    length = buf[i + 1]
+    j = i + 2
+    if length & 0x80:
+        n = length & 0x7F
+        length = int.from_bytes(buf[j:j + n], "big")
+        j += n
+    return tag, j, j + length
+
+
+def _children(buf: bytes, start: int, end: int):
+    """Yields (tag, content_start, content_end, element_start) for each child."""
+    i = start
+    while i < end:
+        tag, cs, ce = _tlv(buf, i)
+        yield tag, cs, ce, i
+        i = ce
+
+
+def _parse_cms(blob: bytes) -> dict:
+    """Pulls what verification needs out of a CMS SignedData (DER)."""
+    _, cs, ce = _tlv(blob, 0)                       # ContentInfo
+    kids = list(_children(blob, cs, ce))
+    _, sd_cs, sd_ce, _ = kids[1]                    # [0] EXPLICIT -> SignedData
+    _, sdc_s, sdc_e = _tlv(blob, sd_cs)             # SignedData SEQUENCE
+    certs, signer_info = [], None
+    for tag, c_s, c_e, e_s in _children(blob, sdc_s, sdc_e):
+        if tag == 0xA0:                             # certificates [0] IMPLICIT
+            for _t, _a, _b, cert_start in _children(blob, c_s, c_e):
+                certs.append(blob[cert_start:_b])
+        elif tag == 0x31:                           # digestAlgs, then signerInfos (last SET)
+            signer_info = (c_s, c_e)
+    si_s, si_e = signer_info                        # SET OF SignerInfo
+    _, info_s, info_e = _tlv(blob, si_s)            # first SignerInfo SEQUENCE
+    # Fixed SignerInfo layout: version, sid, digestAlg, [signedAttrs], sigAlg, signature
+    elems = list(_children(blob, info_s, info_e))
+    _, oid_s, oid_e = _tlv(blob, elems[2][1])       # digestAlg -> its OID
+    digest_oid = blob[oid_s:oid_e]
+    signed_attrs = None
+    idx = 3
+    if elems[idx][0] == 0xA0:
+        signed_attrs = blob[elems[idx][3]:elems[idx][2]]
+        attrs_content = (elems[idx][1], elems[idx][2])
+        idx += 1
+    else:
+        attrs_content = None
+    sig_alg = elems[idx]
+    _, o_s, o_e = _tlv(blob, sig_alg[1])
+    sig_alg_oid = blob[o_s:o_e]
+    sig_elem = elems[idx + 1]
+    signature = blob[sig_elem[1]:sig_elem[2]]
+
+    message_digest = None
+    if attrs_content:
+        for _t, a_s, a_e, _e in _children(blob, *attrs_content):
+            _, ao_s, ao_e = _tlv(blob, a_s)
+            if blob[ao_s:ao_e] == _OID_MESSAGE_DIGEST:
+                set_tag, set_s, set_e = _tlv(blob, ao_e)
+                _, v_s, v_e = _tlv(blob, set_s)
+                message_digest = blob[v_s:v_e]
+
+    return {
+        "certs": certs,
+        "digest_oid": digest_oid,
+        "sig_alg_oid": sig_alg_oid,
+        "signature": signature,
+        # RFC 5652: signature is computed over the attributes re-tagged as SET (0x31)
+        "signed_attrs_der": (b"\x31" + signed_attrs[1:]) if signed_attrs else None,
+        "message_digest": message_digest,
+    }
+
+
+def _check_one_signature(data: bytes, match, trusted_der: bytes) -> dict:
+    import hashlib
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    a, b, c, d = (int(x) for x in match.groups())
+    result = {"intact": False, "trusted": False, "covers_whole_file": False, "reason": None}
+
+    # The hole must be exactly the /Contents <hex> string.
+    if not (0 <= a + b < c <= len(data) and data[a + b:a + b + 1] == b"<" and data[c - 1:c] == b">"):
+        result["reason"] = "Malformed signature byte range."
+        return result
+
+    result["covers_whole_file"] = (a == 0 and c + d == len(data))
+    covered = data[a:a + b] + data[c:c + d]
+    blob = _binascii.unhexlify(data[a + b + 1:c - 1].strip())
+    cms = _parse_cms(blob)
+
+    hash_name = _DIGEST_OIDS.get(cms["digest_oid"])
+    if not hash_name:
+        result["reason"] = "Unsupported digest algorithm."
+        return result
+    hash_cls = {"sha1": hashes.SHA1, "sha224": hashes.SHA224, "sha256": hashes.SHA256,
+                "sha384": hashes.SHA384, "sha512": hashes.SHA512}[hash_name]
+
+    digest_ok = True
+    if cms["message_digest"] is not None:
+        digest_ok = hashlib.new(hash_name, covered).digest() == cms["message_digest"]
+    signed_bytes = cms["signed_attrs_der"] if cms["signed_attrs_der"] else covered
+
+    signer_der = None
+    for cert_der in cms["certs"]:
+        try:
+            public_key = x509.load_der_x509_certificate(cert_der).public_key()
+            if cms["sig_alg_oid"] == _OID_PSS:
+                pad = padding.PSS(mgf=padding.MGF1(hash_cls()), salt_length=padding.PSS.AUTO)
+            else:
+                pad = padding.PKCS1v15()
+            public_key.verify(cms["signature"], signed_bytes, pad, hash_cls())
+            signer_der = cert_der
+            break
+        except Exception:
+            continue
+
+    signature_ok = signer_der is not None
+    result["intact"] = bool(digest_ok and signature_ok and result["covers_whole_file"])
+    result["trusted"] = bool(signer_der is not None and signer_der == trusted_der)
+    if not result["intact"]:
+        if not result["covers_whole_file"]:
+            result["reason"] = "Content was added after the document was signed."
+        elif not digest_ok:
+            result["reason"] = "Document content no longer matches its signature."
+        else:
+            result["reason"] = "The signature itself is invalid."
+    elif not result["trusted"]:
+        result["reason"] = "Signed by a different key than this system's signing certificate."
+    return result
+
+
+def _verify_builtin(file_bytes: bytes) -> dict:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    _, cert_path = _ensure_local_pem_files()
+    trusted_der = x509.load_pem_x509_certificate(Path(cert_path).read_bytes()).public_bytes(
+        serialization.Encoding.DER
+    )
+
+    matches = list(_BYTERANGE_RE.finditer(file_bytes))
+    if not matches:
+        return {"signed": False, "intact": None, "trusted": None, "valid": None}
+
+    results = [_check_one_signature(file_bytes, m, trusted_der) for m in matches]
+    # Prefer the signature made by our own certificate; otherwise the last one.
+    chosen = next((r for r in results if r["trusted"]), results[-1])
+    ok = chosen["intact"] and chosen["trusted"]
+    out = {
+        "signed": True,
+        "intact": chosen["intact"],
+        "trusted": chosen["trusted"],
+        "valid": ok,
+        "bottom_line": ok,
+        "engine": "builtin",
+    }
+    if chosen["reason"]:
+        out["reason"] = chosen["reason"]
+    return out
+
+
+def _verify_with_pyhanko(file_bytes: bytes) -> dict:
+    """Secondary path, only used if the built-in parser could not read the CMS."""
     import io
 
-    key_path, cert_path = _ensure_local_pem_files()
+    _, cert_path = _ensure_local_pem_files()
     trust_root = load_cert_from_pemder(cert_path)
     vc = ValidationContext(trust_roots=[trust_root])
+    r = PdfFileReader(io.BytesIO(file_bytes))
+    sigs = r.embedded_signatures
+    if not sigs:
+        return {"signed": False, "intact": None, "trusted": None, "valid": None}
+    status = validate_pdf_signature(
+        sigs[0], vc, key_usage_settings=KeyUsageConstraints(key_usage=None)
+    )
+    return {
+        "signed": True,
+        "intact": status.intact,
+        "trusted": status.trusted,
+        "valid": status.valid,
+        "bottom_line": status.bottom_line,
+        "engine": "pyhanko",
+    }
 
+
+def verify_pdf_signature(file_bytes: bytes) -> dict:
+    """
+    Returns {signed, intact, trusted, valid, bottom_line, ...} for a PDF's bytes.
+
+      signed=False  -> the PDF carries no signature at all.
+      signed=None   -> something went wrong while checking; see `error`.
+                       (NOT the same as unsigned - callers must not conflate them.)
+      intact=False  -> the content changed after signing (the tamper signal).
+      trusted=False -> the signature is not from this system's certificate.
+    """
     try:
-        r = PdfFileReader(io.BytesIO(file_bytes))
-        sigs = r.embedded_signatures
-        if not sigs:
-            return {"signed": False, "intact": None, "trusted": None, "valid": None}
-
-        status = validate_pdf_signature(
-            sigs[0], vc, key_usage_settings=KeyUsageConstraints(key_usage=None)
-        )
-        return {
-            "signed": True,
-            "intact": status.intact,
-            "trusted": status.trusted,
-            "valid": status.valid,
-            "bottom_line": status.bottom_line,
-        }
-    except Exception as exc:
-        # A corrupted/malformed PDF structure is itself a strong tamper
-        # signal (a genuinely untouched signed PDF always parses cleanly).
-        return {"signed": None, "intact": False, "trusted": False, "valid": False, "error": str(exc)}
+        return _verify_builtin(file_bytes)
+    except Exception as builtin_exc:
+        logger.warning("Built-in signature check failed (%r); trying pyHanko.", builtin_exc)
+        try:
+            return _verify_with_pyhanko(file_bytes)
+        except Exception as hanko_exc:
+            logger.exception("Signature verification failed")
+            return {
+                "signed": None, "intact": None, "trusted": None, "valid": None,
+                "error": f"{type(builtin_exc).__name__}: {builtin_exc} | "
+                         f"pyHanko: {type(hanko_exc).__name__}: {hanko_exc}",
+            }
 
 
 if __name__ == "__main__":

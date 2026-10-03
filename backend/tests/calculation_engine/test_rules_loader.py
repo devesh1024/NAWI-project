@@ -1,4 +1,4 @@
-from app.services.calculation_engine.rules_loader import load_r76_rules
+from backend.app.services.calculation_engine.rules_loader import load_r76_rules
 
 
 def test_load_r76_rules():
