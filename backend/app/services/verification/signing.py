@@ -21,6 +21,7 @@ SIGNING_KEY_PEM / SIGNING_CERT_PEM as env vars containing the raw PEM text.
 """
 import logging
 import os
+import re as _re
 from pathlib import Path
 
 from pyhanko.sign import signers
@@ -72,40 +73,124 @@ def ensure_signing_identity() -> None:
     _ensure_local_pem_files()
 
 
+_SECRET_FILES_DIR = Path("/etc/secrets")     # where Render mounts "Secret Files"
+_resolved: tuple[str, str] | None = None
+
+
+def _normalize_pem(text: str) -> str:
+    """
+    Rebuilds a clean PEM from text that was damaged on its way through an env
+    var / dashboard: line breaks collapsed to spaces, literal "\\n" sequences,
+    surrounding quotes, Windows line endings, everything on one line, etc.
+    """
+    t = text.strip().strip("\"'").strip()
+    t = t.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    m = _re.search(r"-----BEGIN ([A-Z0-9 ]+)-----(.*?)-----END \1-----", t, _re.S)
+    if not m:
+        raise ValueError("no -----BEGIN ...----- / -----END ...----- block found")
+    label = m.group(1)
+    body = _re.sub(r"\s+", "", m.group(2))
+    lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+    return f"-----BEGIN {label}-----\n" + "\n".join(lines) + f"\n-----END {label}-----\n"
+
+
+def _decode_b64_env(value: str) -> str:
+    import base64
+    return base64.b64decode("".join(value.split())).decode("utf-8")
+
+
+def _validated_pair(key_text: str, cert_text: str) -> tuple[str, str]:
+    """Normalises both PEMs and proves they load AND belong together."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    key_pem = _normalize_pem(key_text)
+    cert_pem = _normalize_pem(cert_text)
+    key = load_pem_private_key(key_pem.encode(), password=None)
+    cert = x509.load_pem_x509_certificate(cert_pem.encode())
+    if key.public_key().public_numbers() != cert.public_key().public_numbers():
+        raise ValueError("the private key does not belong to the certificate")
+    return key_pem, cert_pem
+
+
+def _pair_from_environment() -> tuple[str, str] | None:
+    """Looks for a configured key/cert; returns None if nothing is configured."""
+    candidates = []
+    kb, cb = os.getenv("SIGNING_KEY_PEM_B64"), os.getenv("SIGNING_CERT_PEM_B64")
+    if kb and cb:
+        candidates.append(("SIGNING_KEY_PEM_B64 / SIGNING_CERT_PEM_B64", lambda: (_decode_b64_env(kb), _decode_b64_env(cb))))
+    kp, cp = os.getenv("SIGNING_KEY_PEM"), os.getenv("SIGNING_CERT_PEM")
+    if kp and cp:
+        candidates.append(("SIGNING_KEY_PEM / SIGNING_CERT_PEM", lambda: (kp, cp)))
+    sk, sc = _SECRET_FILES_DIR / "signing_key.pem", _SECRET_FILES_DIR / "signing_cert.pem"
+    if sk.exists() and sc.exists():
+        candidates.append(("Render secret files", lambda: (sk.read_text(), sc.read_text())))
+
+    for source, load in candidates:
+        try:
+            return _validated_pair(*load())
+        except Exception as exc:
+            logger.error("Signing key from %s is unusable (%s: %s).", source, type(exc).__name__, exc)
+    return None
+
+
+def ensure_signing_identity() -> None:
+    """Called once at app startup so the first report never fails for lack of a key."""
+    _ensure_local_pem_files()
+
+
 def _ensure_local_pem_files() -> tuple[str, str]:
     """
-    Resolves to local file paths pyHanko can load from, writing them from
-    SIGNING_KEY_PEM / SIGNING_CERT_PEM env vars first if the files don't
-    already exist (covers the Render-env-var deployment path without
-    changing the signing/loading code below).
+    Resolves to local key/cert file paths, in this order:
+      1. a valid key/cert pair from env vars (…_B64 preferred) or Render secret files
+      2. an existing, valid pair in CERT_DIR (local development)
+      3. a freshly generated pair (with a loud warning)
+    Anything configured but broken is logged with the reason and skipped, so
+    report generation keeps working instead of dying with a cryptic error.
     """
+    global _resolved
+    if _resolved and Path(_resolved[0]).exists() and Path(_resolved[1]).exists():
+        return _resolved
+
+    configured = _pair_from_environment()
+    if configured:
+        CERT_DIR.mkdir(parents=True, exist_ok=True)
+        KEY_PATH.write_text(configured[0])
+        CERT_PATH.write_text(configured[1])
+        _resolved = (str(KEY_PATH), str(CERT_PATH))
+        return _resolved
+
     if KEY_PATH.exists() and CERT_PATH.exists():
-        return str(KEY_PATH), str(CERT_PATH)
+        try:
+            _validated_pair(KEY_PATH.read_text(), CERT_PATH.read_text())
+            _resolved = (str(KEY_PATH), str(CERT_PATH))
+            return _resolved
+        except Exception as exc:
+            logger.error("Existing key files in %s are unusable (%s: %s); regenerating.",
+                         CERT_DIR, type(exc).__name__, exc)
 
-    key_pem = os.getenv("SIGNING_KEY_PEM")
-    cert_pem = os.getenv("SIGNING_CERT_PEM")
-    if not key_pem or not cert_pem:
-        # Nothing configured: create a signing identity automatically (first run).
-        generate_signing_identity()
-        logger.warning(
-            "No signing key found - generated a new one at %s. Fine for local "
-            "development. On hosts with an ephemeral disk (e.g. Render) set "
-            "SIGNING_KEY_PEM / SIGNING_CERT_PEM instead, otherwise every redeploy "
-            "creates a new key and reports signed earlier will no longer verify.",
-            CERT_DIR,
-        )
-        return str(KEY_PATH), str(CERT_PATH)
-
-    CERT_DIR.mkdir(parents=True, exist_ok=True)
-    KEY_PATH.write_text(key_pem)
-    CERT_PATH.write_text(cert_pem)
-    return str(KEY_PATH), str(CERT_PATH)
+    generate_signing_identity()
+    logger.warning(
+        "No usable signing key configured - generated a new one at %s. Fine for local "
+        "development. On Render (ephemeral disk) set SIGNING_KEY_PEM_B64 / "
+        "SIGNING_CERT_PEM_B64, otherwise every restart creates a new key and reports "
+        "signed earlier will no longer verify as trusted.",
+        CERT_DIR,
+    )
+    _resolved = (str(KEY_PATH), str(CERT_PATH))
+    return _resolved
 
 
 def sign_pdf_file(input_path: str, output_path: str) -> None:
     """Reads a plain PDF, writes a digitally-signed copy to output_path."""
     key_path, cert_path = _ensure_local_pem_files()
     signer = signers.SimpleSigner.load(key_path, cert_path, key_passphrase=None)
+    if signer is None:
+        # pyHanko returns None (and only logs) when the key can't be loaded.
+        raise RuntimeError(
+            "Could not load the report-signing key/certificate from "
+            f"{CERT_DIR}. Check SIGNING_KEY_PEM_B64 / SIGNING_CERT_PEM_B64."
+        )
 
     with open(input_path, "rb") as inf:
         w = IncrementalPdfFileWriter(inf)
@@ -134,7 +219,6 @@ def sign_pdf_file(input_path: str, output_path: str) -> None:
 #   4. The signer certificate must be THIS system's certificate (so a PDF
 #      signed by someone else's key is "intact" but not "trusted").
 # --------------------------------------------------------------------------
-import re as _re
 import binascii as _binascii
 
 _BYTERANGE_RE = _re.compile(rb"/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]")
