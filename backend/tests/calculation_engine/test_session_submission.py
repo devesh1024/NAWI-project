@@ -32,9 +32,7 @@ class FakeDB:
         self.committed = False
 
     def query(self, model):
-        return FakeQuery(
-            self.objects.get(model)
-        )
+        return FakeQuery(self.objects.get(model))
 
     def add(self, obj):
         pass
@@ -49,21 +47,21 @@ class FakeDB:
         pass
 
 
-def make_user(laboratory_id):
+def make_user(laboratory_id, user_id=None):
     return SimpleNamespace(
-        user_id=uuid4(),
+        user_id=user_id or uuid4(),
         laboratory_id=laboratory_id,
         role="TESTER",
         status="ACTIVE",
     )
 
 
-def make_session(laboratory_id):
+def make_session(laboratory_id, tester_id):
     return SimpleNamespace(
         test_session_id=uuid4(),
         laboratory_id=laboratory_id,
         instrument_id=uuid4(),
-        tester_id=uuid4(),
+        tester_id=tester_id,
         reviewer_id=None,
         standard_id=uuid4(),
         session_number="SESSION-001",
@@ -94,11 +92,15 @@ def make_test(
 
 def submit_session(session, tests):
     """
-    Execute the session submission endpoint using a fake DB.
+    Execute the session submission workflow using a fake DB.
+
+    Tester workflow:
+        DRAFT -> IN PROGRESS -> SUBMITTED
     """
 
     current_user = make_user(
         laboratory_id=session.laboratory_id,
+        user_id=session.tester_id,
     )
 
     fake_db = FakeDB(
@@ -115,13 +117,24 @@ def submit_session(session, tests):
         return current_user
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = (
-        override_get_current_user
-    )
+    app.dependency_overrides[get_current_user] = override_get_current_user
 
     client = TestClient(app)
 
     try:
+        # Step 1: DRAFT -> IN PROGRESS
+        response = client.patch(
+            f"/api/test-sessions/"
+            f"{session.test_session_id}/status",
+            json={
+                "status": "IN PROGRESS",
+            },
+        )
+
+        assert response.status_code == 200
+        assert session.status == "IN PROGRESS"
+
+        # Step 2: IN PROGRESS -> SUBMITTED
         response = client.patch(
             f"/api/test-sessions/"
             f"{session.test_session_id}/status",
@@ -138,9 +151,11 @@ def submit_session(session, tests):
 
 def test_submit_session_with_all_tests_passed():
     laboratory_id = uuid4()
+    tester_id = uuid4()
 
     session = make_session(
         laboratory_id=laboratory_id,
+        tester_id=tester_id,
     )
 
     tests = [
@@ -175,9 +190,11 @@ def test_submit_session_with_all_tests_passed():
 
 def test_submit_session_with_any_failed_test():
     laboratory_id = uuid4()
+    tester_id = uuid4()
 
     session = make_session(
         laboratory_id=laboratory_id,
+        tester_id=tester_id,
     )
 
     tests = [
@@ -212,9 +229,11 @@ def test_submit_session_with_any_failed_test():
 
 def test_submit_session_with_incomplete_applicable_test():
     laboratory_id = uuid4()
+    tester_id = uuid4()
 
     session = make_session(
         laboratory_id=laboratory_id,
+        tester_id=tester_id,
     )
 
     tests = [
@@ -249,9 +268,11 @@ def test_submit_session_with_incomplete_applicable_test():
 
 def test_submit_session_with_only_not_applicable_tests():
     laboratory_id = uuid4()
+    tester_id = uuid4()
 
     session = make_session(
         laboratory_id=laboratory_id,
+        tester_id=tester_id,
     )
 
     tests = [

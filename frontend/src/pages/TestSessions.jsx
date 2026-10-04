@@ -40,7 +40,7 @@ function resultBadge(overallResult) {
 }
 
 export default function TestSessions() {
-  const { token, role, session } = useAuth();
+  const { token, role, session, user } = useAuth();
   const [editing, setEditing] = useState(null); // session being edited, null = creating
   const [actionError, setActionError] = useState("");
   const [sessions, setSessions] = useState([]);
@@ -63,7 +63,7 @@ export default function TestSessions() {
       ]);
       const visibleSessions =
         role === "TESTER"
-          ? s.filter((session) => session.tester_id === useAuth().user?.user_id)
+          ? s.filter((session) => session.tester_id === user?.user_id)
           : role === "REVIEWER"
             ? s.filter((session) => session.status === "SUBMITTED" || session.status === "UNDER REVIEW")
             : role === "APPROVER"
