@@ -567,6 +567,53 @@ function CalculationForm({ sessionTestId, testCode, token, onSaved }) {
   if (testCode === "TEMP_NO_LOAD") return <TempNoLoadForm onSubmit={submitInputs} submitting={submitting} error={error} />;
   if (testCode === "ECC_WEIGHT") return <EccentricityForm onSubmit={submitInputs} submitting={submitting} error={error} />;
   if (testCode === "REP") return <RepeatabilityForm onSubmit={submitInputs} submitting={submitting} error={error} />;
+  if (testCode === "DIS") { return (<DiscriminationForm onSubmit={submitInputs} submitting={submitting} error={error} />); }
+  if (testCode === "SPAN") {
+    return (
+      <SpanStabilityForm
+        onSubmit={submitInputs}
+        submitting={submitting}
+        error={error}
+      />
+    );
+  }
+  if (testCode === "VOLT") {
+    return (
+      <VoltageVariationForm
+        onSubmit={submitInputs}
+        submitting={submitting}
+        error={error}
+      />
+    );
+  }
+  if (testCode === "WARMUP") {
+    return (
+      <WarmupForm
+        onSubmit={submitInputs}
+        submitting={submitting}
+        error={error}
+      />
+    );
+  }
+  if (testCode === "TARE") {
+    return (
+      <TareForm
+        onSubmit={submitInputs}
+        submitting={submitting}
+        error={error}
+      />
+    );
+  }
+
+  if (testCode === "CRP") {
+    return (
+      <CreepForm
+        onSubmit={submitInputs}
+        submitting={submitting}
+        error={error}
+      />
+    );
+  }
   return <GenericJsonForm testCode={testCode} onSubmit={submitInputs} submitting={submitting} error={error} />;
 }
 
@@ -1167,6 +1214,999 @@ function RepeatabilityForm({ onSubmit, submitting, error }) {
       >
         {submitting ? "Calculating…" : "Run calculation"}
       </Button>
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function CreepForm({ onSubmit, submitting, error }) {
+  const TIMES = [0, 5, 15, 30];
+
+  const [load, setLoad] = useState("30");
+
+  const [rows, setRows] = useState(
+    TIMES.map((time_minutes) => ({
+      time_minutes,
+      indication: "",
+      additional_load: "0",
+      temperature: "20",
+    }))
+  );
+
+  function updateRow(index, key, value) {
+    setRows((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    onSubmit({
+      load: Number(load),
+      readings: rows.map((row) => ({
+        time_minutes: Number(row.time_minutes),
+        indication: Number(row.indication),
+        additional_load: Number(row.additional_load || 0),
+      })),
+      temperatures: rows.map((row) => Number(row.temperature)),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-medium">
+          Test Load (kg)
+        </label>
+
+        <input
+          type="number"
+          step="any"
+          value={load}
+          onChange={(e) => setLoad(e.target.value)}
+          required
+          className="w-32 rounded-lg border border-input bg-background px-3 py-2 text-xs"
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-input">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="px-3 py-2 text-left">
+                Time (min)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Indication (kg)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Additional Load (kg)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Temperature (°C)
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-2 font-medium">
+                  {row.time_minutes}
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.indication}
+                    onChange={(e) =>
+                      updateRow(i, "indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.additional_load}
+                    onChange={(e) =>
+                      updateRow(i, "additional_load", e.target.value)
+                    }
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.temperature}
+                    onChange={(e) =>
+                      updateRow(i, "temperature", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Prototype supports the 30-minute early-termination path
+        using readings at 0, 5, 15 and 30 minutes.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function TareForm({ onSubmit, submitting, error }) {
+  const [tareValue, setTareValue] = useState("10");
+  const [maximumTare, setMaximumTare] = useState("15");
+
+  const [loadingRows, setLoadingRows] = useState(
+    Array.from({ length: 5 }, () => ({
+      load: "",
+      indication: "",
+      additional_load: "0",
+      zero_error: "0",
+    }))
+  );
+
+  const [unloadingRows, setUnloadingRows] = useState(
+    Array.from({ length: 5 }, () => ({
+      load: "",
+      indication: "",
+      additional_load: "0",
+      zero_error: "0",
+    }))
+  );
+
+  function updateRow(setter, index, key, value) {
+    setter((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    const convertRows = (rows) =>
+      rows.map((row) => ({
+        load: Number(row.load),
+        indication: Number(row.indication),
+        additional_load: Number(row.additional_load || 0),
+        zero_error: Number(row.zero_error || 0),
+      }));
+
+    onSubmit({
+      tare_value: Number(tareValue),
+      maximum_tare: Number(maximumTare),
+      loading_measurements: convertRows(loadingRows),
+      unloading_measurements: convertRows(unloadingRows),
+    });
+  }
+
+  function renderRows(rows, setter) {
+    return rows.map((row, i) => (
+      <tr key={i} className="border-b last:border-0">
+        <td className="px-3 py-2 font-medium">{i + 1}</td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.load}
+            onChange={(e) =>
+              updateRow(setter, i, "load", e.target.value)
+            }
+            required
+            className="w-28 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.indication}
+            onChange={(e) =>
+              updateRow(setter, i, "indication", e.target.value)
+            }
+            required
+            className="w-28 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.additional_load}
+            onChange={(e) =>
+              updateRow(setter, i, "additional_load", e.target.value)
+            }
+            className="w-28 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.zero_error}
+            onChange={(e) =>
+              updateRow(setter, i, "zero_error", e.target.value)
+            }
+            className="w-28 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+      </tr>
+    ));
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium">
+            Tare Value (kg)
+          </label>
+          <input
+            type="number"
+            step="any"
+            value={tareValue}
+            onChange={(e) => setTareValue(e.target.value)}
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium">
+            Maximum Tare (kg)
+          </label>
+          <input
+            type="number"
+            step="any"
+            value={maximumTare}
+            onChange={(e) => setMaximumTare(e.target.value)}
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-medium">
+          Loading Measurements
+        </p>
+
+        <div className="overflow-x-auto rounded-lg border border-input">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/30">
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Load (kg)</th>
+                <th className="px-3 py-2 text-left">Indication (kg)</th>
+                <th className="px-3 py-2 text-left">Additional Load (kg)</th>
+                <th className="px-3 py-2 text-left">Zero Error (kg)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {renderRows(loadingRows, setLoadingRows)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-xs font-medium">
+          Unloading Measurements
+        </p>
+
+        <div className="overflow-x-auto rounded-lg border border-input">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/30">
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Load (kg)</th>
+                <th className="px-3 py-2 text-left">Indication (kg)</th>
+                <th className="px-3 py-2 text-left">Additional Load (kg)</th>
+                <th className="px-3 py-2 text-left">Zero Error (kg)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {renderRows(unloadingRows, setUnloadingRows)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Enter at least 5 measurements in each direction.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+function WarmupForm({ onSubmit, submitting, error }) {
+  const TIMES = [5, 15, 30];
+
+  const [powerOffHours, setPowerOffHours] = useState("8");
+  const [load, setLoad] = useState("28");
+
+  const [rows, setRows] = useState(
+    TIMES.map((elapsed_minutes) => ({
+      elapsed_minutes,
+      indication: "",
+      zero_error: "0",
+      additional_load: "0",
+    }))
+  );
+
+  function updateRow(index, key, value) {
+    setRows((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    onSubmit({
+      power_off_hours: Number(powerOffHours),
+      load: Number(load),
+      observations: rows.map((row) => ({
+        elapsed_minutes: Number(row.elapsed_minutes),
+        indication: Number(row.indication),
+        zero_error: Number(row.zero_error || 0),
+        additional_load: Number(row.additional_load || 0),
+      })),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium">
+            Power-Off Time (hours)
+          </label>
+          <input
+            type="number"
+            step="any"
+            value={powerOffHours}
+            onChange={(e) => setPowerOffHours(e.target.value)}
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium">
+            Test Load (kg)
+          </label>
+          <input
+            type="number"
+            step="any"
+            value={load}
+            onChange={(e) => setLoad(e.target.value)}
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-input">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="px-3 py-2 text-left">
+                Elapsed Time (min)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Indication (kg)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Additional Load (kg)
+              </th>
+              <th className="px-3 py-2 text-left">
+                Zero Error (kg)
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-2 font-medium">
+                  {row.elapsed_minutes}
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.indication}
+                    onChange={(e) =>
+                      updateRow(i, "indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.additional_load}
+                    onChange={(e) =>
+                      updateRow(i, "additional_load", e.target.value)
+                    }
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.zero_error}
+                    onChange={(e) =>
+                      updateRow(i, "zero_error", e.target.value)
+                    }
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Required observation times: 5, 15 and 30 minutes.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function VoltageVariationForm({ onSubmit, submitting, error }) {
+  const VOLTAGES = [195.5, 230, 253];
+
+  const [load, setLoad] = useState("0.1");
+
+  const [rows, setRows] = useState(
+    VOLTAGES.map((voltage) => ({
+      voltage,
+      indication: "",
+      additional_load: "0",
+      zero_error: "0",
+    }))
+  );
+
+  function updateRow(index, key, value) {
+    setRows((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    onSubmit({
+      load: Number(load),
+      observations: rows.map((row) => ({
+        voltage: Number(row.voltage),
+        indication: Number(row.indication),
+        additional_load: Number(row.additional_load || 0),
+        zero_error: Number(row.zero_error || 0),
+      })),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div>
+        <label className="text-xs font-medium">Test Load (kg)</label>
+        <input
+          type="number"
+          step="any"
+          value={load}
+          onChange={(e) => setLoad(e.target.value)}
+          required
+          className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-input">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="px-3 py-2 text-left">Voltage (V)</th>
+              <th className="px-3 py-2 text-left">Indication (kg)</th>
+              <th className="px-3 py-2 text-left">
+                Additional Load (kg)
+              </th>
+              <th className="px-3 py-2 text-left">Zero Error (kg)</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-2 font-medium">
+                  {row.voltage}
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.indication}
+                    onChange={(e) =>
+                      updateRow(i, "indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.additional_load}
+                    onChange={(e) =>
+                      updateRow(i, "additional_load", e.target.value)
+                    }
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.zero_error}
+                    onChange={(e) =>
+                      updateRow(i, "zero_error", e.target.value)
+                    }
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Required voltages: 195.5 V, 230 V and 253 V.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+function SpanStabilityForm({ onSubmit, submitting, error }) {
+  const INITIAL_COUNT = 5;
+  const MEASUREMENT_COUNT = 8;
+
+  const [load, setLoad] = useState("28");
+  const [powerDisconnections, setPowerDisconnections] = useState(["8", "8"]);
+
+  const [initialRows, setInitialRows] = useState(
+    Array.from({ length: INITIAL_COUNT }, () => ({
+      indication: "",
+      additional_load: "0",
+      zero_error: "0",
+    }))
+  );
+
+  const [measurementRows, setMeasurementRows] = useState(
+    Array.from({ length: MEASUREMENT_COUNT }, () => ({
+      indication: "",
+      additional_load: "0",
+      zero_error: "0",
+    }))
+  );
+
+  function updateRow(setter, index, key, value) {
+    setter((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    const convertRows = (rows) =>
+      rows.map((row) => ({
+        indication: Number(row.indication),
+        additional_load: Number(row.additional_load || 0),
+        zero_error: Number(row.zero_error || 0),
+      }));
+
+    onSubmit({
+      load: Number(load),
+
+      power_disconnections: powerDisconnections.map((value) =>
+        Number(value)
+      ),
+
+      initial_readings: convertRows(initialRows),
+
+      measurements: convertRows(measurementRows),
+    });
+  }
+
+  function renderRows(rows, setter) {
+    return rows.map((row, i) => (
+      <tr key={i} className="border-b last:border-0">
+        <td className="px-3 py-2 font-medium">
+          {i + 1}
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.indication}
+            onChange={(e) =>
+              updateRow(
+                setter,
+                i,
+                "indication",
+                e.target.value
+              )
+            }
+            required
+            className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.additional_load}
+            onChange={(e) =>
+              updateRow(
+                setter,
+                i,
+                "additional_load",
+                e.target.value
+              )
+            }
+            className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+
+        <td className="px-3 py-2">
+          <input
+            type="number"
+            step="any"
+            value={row.zero_error}
+            onChange={(e) =>
+              updateRow(
+                setter,
+                i,
+                "zero_error",
+                e.target.value
+              )
+            }
+            className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+          />
+        </td>
+      </tr>
+    ));
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <label className="text-xs font-medium">
+            Test Load (kg)
+          </label>
+
+          <input
+            type="number"
+            step="any"
+            value={load}
+            onChange={(e) => setLoad(e.target.value)}
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium">
+            Power Disconnection 1 (hours)
+          </label>
+
+          <input
+            type="number"
+            step="any"
+            min="8"
+            value={powerDisconnections[0]}
+            onChange={(e) =>
+              setPowerDisconnections((current) => [
+                e.target.value,
+                current[1],
+              ])
+            }
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium">
+            Power Disconnection 2 (hours)
+          </label>
+
+          <input
+            type="number"
+            step="any"
+            min="8"
+            value={powerDisconnections[1]}
+            onChange={(e) =>
+              setPowerDisconnections((current) => [
+                current[0],
+                e.target.value,
+              ])
+            }
+            required
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs"
+          />
+        </div>
+      </div>
+
+      <div>
+        <h4 className="mb-2 text-sm font-semibold">
+          Initial Readings — 5
+        </h4>
+
+        <div className="overflow-x-auto rounded-lg border border-input">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/30">
+                <th className="px-3 py-2 text-left">Reading</th>
+                <th className="px-3 py-2 text-left">
+                  Indication (kg)
+                </th>
+                <th className="px-3 py-2 text-left">
+                  Additional Load (kg)
+                </th>
+                <th className="px-3 py-2 text-left">
+                  Zero Error (kg)
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {renderRows(initialRows, setInitialRows)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="mb-2 text-sm font-semibold">
+          Subsequent Measurements — 8
+        </h4>
+
+        <div className="overflow-x-auto rounded-lg border border-input">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/30">
+                <th className="px-3 py-2 text-left">Reading</th>
+                <th className="px-3 py-2 text-left">
+                  Indication (kg)
+                </th>
+                <th className="px-3 py-2 text-left">
+                  Additional Load (kg)
+                </th>
+                <th className="px-3 py-2 text-left">
+                  Zero Error (kg)
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {renderRows(measurementRows, setMeasurementRows)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Required: 5 initial readings, at least 8 subsequent
+        measurements, and two power disconnections of at least
+        8 hours each.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
+      {error && (
+        <p className="text-xs text-status-fail">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+// TODO:
+function DiscriminationForm({ onSubmit, submitting, error }) {
+  const LOADS = [0.2, 15, 30];
+
+  const [rows, setRows] = useState(
+    LOADS.map((load) => ({
+      load,
+      initial_indication: "",
+      decreased_indication: "",
+      increased_indication: "",
+    }))
+  );
+
+  function updateRow(index, key, value) {
+    setRows((current) =>
+      current.map((row, i) =>
+        i === index ? { ...row, [key]: value } : row
+      )
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+
+    onSubmit({
+      loads: rows.map((row) => ({
+        load: Number(row.load),
+        initial_indication: Number(row.initial_indication),
+        decreased_indication: Number(row.decreased_indication),
+        increased_indication: Number(row.increased_indication),
+      })),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="overflow-x-auto rounded-lg border border-input">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="px-3 py-2 text-left">Load (kg)</th>
+              <th className="px-3 py-2 text-left">Initial Indication (kg)</th>
+              <th className="px-3 py-2 text-left">Decreased Indication (kg)</th>
+              <th className="px-3 py-2 text-left">Increased Indication (kg)</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-2 font-medium">
+                  {row.load}
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.initial_indication}
+                    onChange={(e) =>
+                      updateRow(i, "initial_indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.decreased_indication}
+                    onChange={(e) =>
+                      updateRow(i, "decreased_indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+
+                <td className="px-3 py-2">
+                  <input
+                    type="number"
+                    step="any"
+                    value={row.increased_indication}
+                    onChange={(e) =>
+                      updateRow(i, "increased_indication", e.target.value)
+                    }
+                    required
+                    className="w-32 rounded-lg border border-input bg-background px-2 py-2"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Required loads: Min = 0.2 kg, Max/2 = 15 kg, Max = 30 kg.
+      </p>
+
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? "Calculating…" : "Run calculation"}
+      </Button>
+
       {error && (
         <p className="text-xs text-status-fail">
           {error}
