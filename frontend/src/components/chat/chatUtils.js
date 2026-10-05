@@ -8,11 +8,7 @@ export function preview(text, max = NOTIFICATION_PREVIEW_CHARS) {
   return flat.length > max ? `${flat.slice(0, max).trimEnd()}…` : flat;
 }
 
-export function roleLabel(role) {
-  if (!role) return "";
-  const words = role.toLowerCase().replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
+export { roleLabel } from "@/lib/roles";
 
 export function initials(name = "") {
   const parts = name.trim().split(/\s+/).filter(Boolean);

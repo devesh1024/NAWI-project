@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/apiClient";
+import { roleLabel } from "@/lib/roles";
 
 const AuthContext = createContext(null);
 const STORAGE_KEY = "nawi_session";
@@ -15,6 +16,10 @@ function readStoredSession() {
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(readStoredSession);
+  // The signed-in person's profile, including their role and what it allows.
+  // Loaded from the server (not the login token) so a role the Lab Head changes
+  // takes effect straight away.
+  const [profile, setProfile] = useState(null);
 
   async function signIn(email, password) {
     try {
@@ -27,6 +32,7 @@ export function AuthProvider({ children }) {
         email,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
+      setProfile(null);
       setSession(newSession);
       return { session: newSession };
     } catch (err) {
@@ -34,20 +40,56 @@ export function AuthProvider({ children }) {
     }
   }
 
-  function signOut() {
+  const signOut = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    setProfile(null);
     setSession(null);
-  }
+  }, []);
 
-  const value = {
-    session,
-    token: session?.token ?? null,
-    role: session?.role ?? null,
-    email: session?.email ?? null,
-    loading: false,
-    signIn,
-    signOut,
-  };
+  const token = session?.token ?? null;
+
+  const refreshProfile = useCallback(async () => {
+    if (!token) return null;
+    try {
+      const me = await api.getMyProfile(token);
+      setProfile(me);
+      return me;
+    } catch (err) {
+      // An expired token or a deactivated account: back to the login screen.
+      if (/expired|invalid|not active|credentials|401|403/i.test(err.message)) signOut();
+      return null;
+    }
+  }, [token, signOut]);
+
+  useEffect(() => {
+    if (token) refreshProfile();
+  }, [token, refreshProfile]);
+
+  const value = useMemo(() => {
+    const capabilities = new Set(profile?.capabilities ?? []);
+    const role = profile?.role ?? session?.role ?? null;
+    const name = profile
+      ? [profile.first_name, profile.last_name].filter(Boolean).join(" ") || profile.email
+      : null;
+
+    return {
+      session,
+      token,
+      role,
+      roleLabel: profile?.role_label ?? roleLabel(role),
+      email: session?.email ?? null,
+      profile,
+      name,
+      profileReady: !!profile,
+      // can("sessions.review"): true when the signed-in role holds that permission.
+      can: (capability) => capabilities.has(capability),
+      refreshProfile,
+      loading: false,
+      signIn,
+      signOut,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, profile, token, refreshProfile, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

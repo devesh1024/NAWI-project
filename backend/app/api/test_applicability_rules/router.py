@@ -14,7 +14,7 @@ from backend.app.schemas.test_applicability_rule import (
 )
 from backend.app.utils.dependencies import (
     get_current_user,
-    require_lab_admin,
+    require_capability,
 )
 
 
@@ -75,7 +75,7 @@ def get_applicability_rule(
 )
 def create_applicability_rule(
     data: TestApplicabilityRuleCreate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     # Check that the test definition exists
@@ -135,7 +135,7 @@ def create_applicability_rule(
 def update_applicability_rule(
     applicability_rule_id: UUID,
     data: TestApplicabilityRuleUpdate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     rule = (

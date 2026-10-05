@@ -94,8 +94,11 @@ def submit_session(session, tests):
     """
     Execute the session submission workflow using a fake DB.
 
-    Tester workflow:
+    Tester workflow (backend/app/services/workflow_rules.py):
         DRAFT -> IN PROGRESS -> SUBMITTED
+
+    Both moves are owner-only: the fake user is the session's own tester
+    (user_id == session.tester_id), with the TESTER role.
     """
 
     current_user = make_user(

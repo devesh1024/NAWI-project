@@ -1,6 +1,7 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
+import { canOpen } from "@/lib/roles";
 import {
   LayoutGrid,
   Gauge,
@@ -15,24 +16,22 @@ import {
   Home,
 } from "lucide-react";
 
-// role gate: null = visible to everyone signed in
+// `page` is the key in ROUTE_ACCESS (lib/roles.js): each role only gets the
+// screens it actually works in.
 const NAV_ITEMS = [
-  { to: "/app/dashboard", icon: LayoutGrid, label: "Dashboard", roles: null },
-  { to: "/app/instruments", icon: Gauge, label: "Instruments", roles: null },
-  { to: "/app/test-sessions", icon: FlaskConical, label: "Test Sessions", roles: null },
-  { to: "/app/reports", icon: FileText, label: "Reports", roles: null },
-  { to: "/app/equipment", icon: Wrench, label: "Equipment", roles: null },
-  { to: "/app/standards", icon: BookMarked, label: "Standards & Rules", roles: ["LAB_ADMIN"] },
-  { to: "/app/users", icon: Users2, label: "Users", roles: ["LAB_ADMIN"] },
-  { to: "/app/audit-log", icon: ScrollText, label: "Audit Log", roles: ["LAB_ADMIN"] },
+  { to: "/app/dashboard", icon: LayoutGrid, label: "Dashboard", page: "dashboard" },
+  { to: "/app/instruments", icon: Gauge, label: "Instruments", page: "instruments" },
+  { to: "/app/test-sessions", icon: FlaskConical, label: "Test Sessions", page: "test-sessions" },
+  { to: "/app/reports", icon: FileText, label: "Reports", page: "reports" },
+  { to: "/app/equipment", icon: Wrench, label: "Equipment", page: "equipment" },
+  { to: "/app/standards", icon: BookMarked, label: "Standards & Rules", page: "standards" },
+  { to: "/app/users", icon: Users2, label: "Staff & Roles", page: "users" },
+  { to: "/app/audit-log", icon: ScrollText, label: "Audit Log", page: "audit-log" },
 ];
 
-/**
- * `role` is currently read from the users table lookup (see AppShell); pass
- * null while that hasn't resolved yet to show the common items only.
- */
-export function Sidebar({ role }) {
-  const items = NAV_ITEMS.filter((item) => !item.roles || (role && item.roles.includes(role)));
+export function Sidebar({ role, can }) {
+  const me = { role, can: can || (() => false) };
+  const items = NAV_ITEMS.filter((item) => canOpen(me, item.page));
 
   return (
     <aside className="flex h-screen w-[76px] flex-col items-center gap-1 bg-rail py-5">

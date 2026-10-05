@@ -14,7 +14,7 @@ from backend.app.schemas.mpe_rule import (
 )
 from backend.app.utils.dependencies import (
     get_current_user,
-    require_lab_admin,
+    require_capability,
 )
 
 router = APIRouter(
@@ -59,7 +59,7 @@ def get_mpe_rule(
 @router.post("", response_model=MPERuleResponse, status_code=201)
 def create_mpe_rule(
     data: MPERuleCreate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     standard = (
@@ -97,7 +97,7 @@ def create_mpe_rule(
 def update_mpe_rule(
     mpe_rule_id: UUID,
     data: MPERuleUpdate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     mpe_rule = (

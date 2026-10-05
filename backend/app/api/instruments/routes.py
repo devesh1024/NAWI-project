@@ -20,7 +20,8 @@ from backend.app.services.crud_rules import (
     instrument_edit_block_reason,
     normalize_instrument_status,
 )
-from backend.app.utils.dependencies import get_current_user, require_lab_admin
+from backend.app.services import permissions as perm
+from backend.app.utils.dependencies import get_current_user, require_capability
 
 
 router = APIRouter(
@@ -36,7 +37,7 @@ router = APIRouter(
 )
 def create_instrument(
     data: InstrumentCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability("instruments.register")),
     db: Session = Depends(get_db)
 ):
     # Check duplicate instrument code within the same laboratory
@@ -122,7 +123,7 @@ def update_instrument(
     instrument_id: UUID,
     data: InstrumentUpdate,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability("instruments.register")),
     db: Session = Depends(get_db)
 ):
     instrument = (
@@ -209,7 +210,7 @@ def update_instrument(
 def delete_instrument(
     instrument_id: UUID,
     request: Request,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("instruments.delete")),
     db: Session = Depends(get_db)
 ):
     instrument = (

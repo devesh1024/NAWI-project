@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { FlaskConical, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { DEMO_CREDENTIALS } from "@/lib/devAuth";
+import { DEMO_CREDENTIALS, DEMO_ROLES } from "@/lib/devAuth";
 import { Button } from "@/components/ui/Button";
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { EclipseGlow } from "@/components/effects/EclipseGlow";
@@ -42,6 +42,13 @@ export default function Login() {
     setValue("password", DEMO_CREDENTIALS.password);
   }
 
+  // Fill in the demo account for another role (same demo lab, same password).
+  function fillDemoRole(email) {
+    if (!email) return;
+    setValue("email", email);
+    setValue("password", DEMO_CREDENTIALS.password);
+  }
+
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
       <EclipseGlow />
@@ -68,6 +75,23 @@ export default function Login() {
             </p>
           </div>
         </button>
+
+        <div className="mt-2">
+          <label htmlFor="demo-role" className="text-xs text-muted-foreground">
+            or see the lab as another role
+          </label>
+          <select
+            id="demo-role"
+            defaultValue=""
+            onChange={(e) => fillDemoRole(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Choose a role…</option>
+            {DEMO_ROLES.map((r) => (
+              <option key={r.email} value={r.email}>{r.role}</option>
+            ))}
+          </select>
+        </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-4">
           <div>

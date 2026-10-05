@@ -74,3 +74,26 @@ def require_lab_admin(
         )
 
     return current_user
+
+
+def require_capability(capability: str):
+    """
+    Dependency factory: only roles holding `capability` (see
+    services/permissions.py) may call the endpoint.
+
+        current_user: User = Depends(require_capability("equipment.manage"))
+    """
+    from backend.app.services.permissions import label_for, user_can
+
+    def checker(current_user: User = Depends(get_current_user)):
+        if not user_can(current_user, capability):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Your role ({label_for(current_user.role)}) is not permitted "
+                    f"to do this."
+                ),
+            )
+        return current_user
+
+    return checker

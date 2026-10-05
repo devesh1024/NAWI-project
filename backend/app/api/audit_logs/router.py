@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from backend.app.database.connection import get_db
 from backend.app.models.audit_log import AuditLog
 from backend.app.models.user import User
-from backend.app.utils.dependencies import get_current_user
+from backend.app.utils.dependencies import require_capability
 
 
 router = APIRouter(
@@ -16,7 +16,7 @@ router = APIRouter(
 @router.get("")
 def get_audit_logs(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_capability("audit.view"))
 ):
     audit_logs = (
         db.query(AuditLog)

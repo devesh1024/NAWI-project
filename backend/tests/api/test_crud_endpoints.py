@@ -48,8 +48,16 @@ def env():
     engine.dispose()
 
 
+class Headers(dict):
+    """Auth headers of the Lab Head. `.tester` holds the headers of a tester in
+    the same lab: the Lab Head does not run tests (roles follow ISO 17025), so
+    sessions are created and moved by the tester."""
+
+    tester: dict
+
+
 def make_lab(client, n):
-    """Register a lab (its admin is a LAB_ADMIN) and return auth headers."""
+    """Register a lab (its admin is the Lab Head) plus one tester; return headers."""
     email = f"admin{n}@example.com"
     r = client.post("/api/auth/register", json={
         "laboratory_code": f"LAB{n}", "laboratory_name": f"Lab {n}",
@@ -58,7 +66,16 @@ def make_lab(client, n):
     assert r.status_code in (200, 201), r.text
     r = client.post("/api/auth/login", json={"email": email, "password": "Passw0rd!x"})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    head = Headers({"Authorization": f"Bearer {r.json()['access_token']}"})
+
+    tester_email = f"tester{n}@example.com"
+    r = client.post("/api/users", headers=head, json={
+        "first_name": "Tara", "email": tester_email, "password": "Passw0rd!x", "role": "TESTER"})
+    assert r.status_code == 201, r.text
+    r = client.post("/api/auth/login", json={"email": tester_email, "password": "Passw0rd!x"})
+    assert r.status_code == 200, r.text
+    head.tester = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    return head
 
 
 def make_instrument(client, h, code="I-1", **extra):
@@ -78,7 +95,7 @@ def make_standard(client, h):
 
 
 def make_session(client, h, instrument, standard, number="S-1"):
-    r = client.post("/api/test-sessions", headers=h, json={
+    r = client.post("/api/test-sessions", headers=h.tester, json={
         "instrument_id": instrument["instrument_id"],
         "standard_id": standard["standard_id"], "session_number": number})
     assert r.status_code == 201, r.text
@@ -119,7 +136,7 @@ def test_inactive_instrument_cannot_start_new_sessions(env):
     inst, std = make_instrument(client, h), make_standard(client, h)
     client.put(f"/api/instruments/{inst['instrument_id']}", json={"status": "INACTIVE"}, headers=h)
 
-    r = client.post("/api/test-sessions", headers=h, json={
+    r = client.post("/api/test-sessions", headers=h.tester, json={
         "instrument_id": inst["instrument_id"], "standard_id": std["standard_id"]})
     assert r.status_code == 409
 
@@ -135,7 +152,7 @@ def test_metrological_fields_lock_once_a_session_is_past_draft(env):
     assert client.put(url, json={"accuracy_class": "II"}, headers=h).status_code == 200
 
     client.patch(f"/api/test-sessions/{session['test_session_id']}/status",
-                 json={"status": "IN PROGRESS"}, headers=h)
+                 json={"status": "IN PROGRESS"}, headers=h.tester)
 
     r = client.put(url, json={"accuracy_class": "I"}, headers=h)
     assert r.status_code == 409 and "accuracy_class" in r.json()["detail"]
@@ -181,7 +198,8 @@ def test_submitted_session_is_frozen(env):
     inst, std = make_instrument(client, h), make_standard(client, h)
     session = make_session(client, h, inst, std)
     url = f"/api/test-sessions/{session['test_session_id']}"
-    client.patch(f"{url}/status", json={"status": "SUBMITTED"}, headers=h)
+    client.patch(f"{url}/status", json={"status": "IN PROGRESS"}, headers=h.tester)
+    assert client.patch(f"{url}/status", json={"status": "SUBMITTED"}, headers=h.tester).status_code == 200
 
     assert client.put(url, json={"remarks": "x"}, headers=h).status_code == 409
     assert client.delete(url, headers=h).status_code == 409

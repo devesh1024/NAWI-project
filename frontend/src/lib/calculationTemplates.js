@@ -1,6 +1,7 @@
 // Example `inputs` payloads for each OIML test code, read directly from the
 // docstrings/validation logic in backend/app/services/calculation_engine/*.py
-// on the jaadu branch. WP and ZR get dedicated forms in TestSessionDetail.jsx;
+// on the jaadu branch. WP, ZR, TEMP_STATIC, TEMP_NO_LOAD, ECC_WEIGHT and REP get
+// dedicated forms in TestSessionDetail.jsx;
 // everything else falls back to a JSON textarea pre-filled with these
 // templates, since each test's exact shape/cardinality is quite specific
 // (e.g. REP needs exactly 2 series of exactly 10 measurements each) and
@@ -109,4 +110,4 @@ export const TEST_INPUT_TEMPLATES = {
   },
 };
 
-export const DEDICATED_FORM_TEST_CODES = ["WP", "ZR"];
+export const DEDICATED_FORM_TEST_CODES = ["WP", "ZR", "TEMP_STATIC", "TEMP_NO_LOAD", "ECC_WEIGHT", "REP"];

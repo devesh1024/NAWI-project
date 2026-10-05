@@ -1,203 +1,263 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
+  ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
+import { ArrowUpRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { SessionStatus } from "@/components/ui/SessionStatus";
+import { useAuth } from "@/hooks/useAuth";
+import { api } from "@/lib/apiClient";
+import { roleTone } from "@/lib/roles";
+import { cn } from "@/lib/utils";
 
-// Sample data shaped like it will eventually come from the backend's
-// /api/test-sessions endpoints — swap for real fetches once wired up.
-const KPIS = [
-  { label: "Total test sessions", value: 128 },
-  { label: "Pass rate", value: 91, suffix: "%" },
-  { label: "Pending review", value: 6 },
-  { label: "Reports this month", value: 14 },
-];
+const RESULT_COLORS = {
+  PASS: "hsl(var(--status-pass))",
+  FAIL: "hsl(var(--status-fail))",
+  "N/A": "hsl(var(--status-na))",
+};
 
-const RESULT_BREAKDOWN = [
-  { name: "Pass", value: 104, color: "hsl(var(--status-pass))" },
-  { name: "Fail", value: 9, color: "hsl(var(--status-fail))" },
-  { name: "N/A", value: 15, color: "hsl(var(--status-na))" },
-];
+// How a KPI's tone changes its card: a coloured edge, never a coloured fill.
+const KPI_EDGE = {
+  default: "border-l-transparent",
+  good: "border-l-status-pass",
+  warn: "border-l-status-pending",
+  bad: "border-l-status-fail",
+};
 
-const MONTHLY_TESTS = [
-  { month: "Apr", tests: 14 },
-  { month: "May", tests: 18 },
-  { month: "Jun", tests: 21 },
-  { month: "Jul", tests: 17 },
-  { month: "Aug", tests: 26 },
-  { month: "Sep", tests: 32 },
-];
+const tooltipStyle = { borderRadius: 12, border: "1px solid hsl(var(--border))", fontSize: 12 };
 
-const RECENT_SESSIONS = [
-  { id: "TS-2026-0142", instrument: "Avery Berkel L223 — Platform Scale", tester: "R. Nair", status: "pass", date: "24 Sep 2026" },
-  { id: "TS-2026-0141", instrument: "Mettler Toledo IND560 — Bench Scale", tester: "S. Kulkarni", status: "pending", date: "23 Sep 2026" },
-  { id: "TS-2026-0140", instrument: "Essae DS-415 — Weighbridge", tester: "A. Verma", status: "fail", date: "22 Sep 2026" },
-  { id: "TS-2026-0139", instrument: "Avery Berkel L223 — Platform Scale", tester: "R. Nair", status: "pass", date: "20 Sep 2026" },
-];
+function timeAgo(iso) {
+  if (!iso) return "";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1440) return `${Math.round(mins / 60)} h ago`;
+  return new Date(iso).toLocaleDateString([], { day: "2-digit", month: "short" });
+}
 
-const PENDING_APPROVALS = [
-  { id: "TS-2026-0141", instrument: "Mettler Toledo IND560", submittedBy: "S. Kulkarni" },
-  { id: "TS-2026-0138", instrument: "Essae DS-415", submittedBy: "A. Verma" },
-];
+function Kpi({ kpi, index }) {
+  const body = (
+    <Card className={cn("border-l-4", KPI_EDGE[kpi.tone] || KPI_EDGE.default, kpi.href && "transition hover:shadow-raised")}>
+      <CardContent className="pt-5">
+        <p className="text-xs font-medium text-muted-foreground">{kpi.label}</p>
+        <p className="mt-1 text-3xl font-semibold">
+          <AnimatedNumber value={Number(kpi.value) || 0} suffix={kpi.suffix || ""} />
+        </p>
+      </CardContent>
+    </Card>
+  );
 
-export default function Dashboard() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Testing activity across your laboratory.</p>
-      </div>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05, duration: 0.35 }}>
+      {kpi.href ? (
+        <Link to={kpi.href} data-cursor-hover className="block">{body}</Link>
+      ) : body}
+    </motion.div>
+  );
+}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {KPIS.map((kpi, i) => (
-          <motion.div
-            key={kpi.label}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05, duration: 0.35 }}
-          >
-            <Card>
-              <CardContent className="pt-5">
-                <p className="text-xs font-medium text-muted-foreground">{kpi.label}</p>
-                <p className="mt-1 text-3xl font-semibold">
-                  <AnimatedNumber value={kpi.value} suffix={kpi.suffix || ""} />
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ))}
-      </div>
+function Queue({ queue }) {
+  const { title, items, empty, total, href } = queue;
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Tests by month</CardTitle>
-          </CardHeader>
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle>
+          {title}
+          {total > 0 && <span className="font-num ml-2 text-sm font-normal text-muted-foreground">{total}</span>}
+        </CardTitle>
+        {href && (
+          <Link to={href} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline" data-cursor-hover>
+            Open <ArrowUpRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
+      </CardHeader>
+      <CardContent className="pt-0">
+        {items.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">{empty}</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {items.map((item) => (
+              <li key={item.id}>
+                <Link
+                  to={item.href}
+                  className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-muted"
+                  data-cursor-hover
+                >
+                  <span className="min-w-0">
+                    <span className="font-num block truncate text-xs text-muted-foreground">{item.title}</span>
+                    <span className="block truncate text-sm font-medium">{item.subtitle}</span>
+                    {(item.meta || item.note) && (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {[item.meta, item.note].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end gap-1">
+                    <SessionStatus status={item.badge} />
+                    {item.result && (
+                      <span className={cn("font-num text-[11px] font-semibold", item.result === "PASS" ? "text-status-pass" : "text-status-fail")}>
+                        {item.result}
+                      </span>
+                    )}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Charts({ charts }) {
+  const results = (charts.results || []).filter((r) => r.value > 0);
+  const hasResults = results.length > 0;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      {charts.monthly && (
+        <Card className={charts.pipeline || charts.results ? "lg:col-span-2" : "lg:col-span-3"}>
+          <CardHeader><CardTitle>Test sessions by month</CardTitle></CardHeader>
           <CardContent className="h-64 pt-0">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={MONTHLY_TESTS}>
+              <LineChart data={charts.monthly}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="month" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 12,
-                    border: "1px solid hsl(var(--border))",
-                    fontSize: 12,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="tests"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth={2.5}
-                  dot={{ r: 3 }}
-                  isAnimationActive
-                />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Line type="monotone" dataKey="tests" name="Sessions" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
+      )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Result breakdown</CardTitle>
-          </CardHeader>
+      {charts.results && (
+        <Card className={!charts.monthly ? "lg:col-span-1" : undefined}>
+          <CardHeader><CardTitle>Test results</CardTitle></CardHeader>
           <CardContent className="h-64 pt-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={RESULT_BREAKDOWN}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={55}
-                  outerRadius={80}
-                  paddingAngle={3}
-                  isAnimationActive
-                >
-                  {RESULT_BREAKDOWN.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
+            {hasResults ? (
+              <>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={results} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={3} isAnimationActive>
+                      {results.map((r) => <Cell key={r.name} fill={RESULT_COLORS[r.name]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="-mt-4 flex justify-center gap-4 text-xs text-muted-foreground">
+                  {results.map((r) => (
+                    <span key={r.name} className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full" style={{ background: RESULT_COLORS[r.name] }} />
+                      {r.name} <span className="font-num">{r.value}</span>
+                    </span>
                   ))}
-                </Pie>
-                <Tooltip contentStyle={{ borderRadius: 12, fontSize: 12 }} />
-              </PieChart>
+                </div>
+              </>
+            ) : (
+              <p className="flex h-full items-center justify-center text-sm text-muted-foreground">No results recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {charts.pipeline && (
+        <Card className={charts.monthly ? "lg:col-span-3" : "lg:col-span-2"}>
+          <CardHeader><CardTitle>Where the work is</CardTitle></CardHeader>
+          <CardContent className="h-56 pt-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={charts.pipeline} layout="vertical" margin={{ left: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                <YAxis type="category" dataKey="status" width={96} tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "hsl(var(--muted))" }} />
+                <Bar dataKey="count" name="Sessions" fill="hsl(var(--primary))" radius={[0, 6, 6, 0]} isAnimationActive />
+              </BarChart>
             </ResponsiveContainer>
-            <div className="-mt-4 flex justify-center gap-4 text-xs text-muted-foreground">
-              {RESULT_BREAKDOWN.map((r) => (
-                <span key={r.name} className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full" style={{ background: r.color }} />
-                  {r.name}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Activity({ items, title }) {
+  if (!items?.length) return null;
+  return (
+    <Card>
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardContent className="pt-0">
+        <ul className="divide-y divide-border">
+          {items.map((a, i) => (
+            <li key={i} className="flex items-start justify-between gap-4 py-2.5 text-sm">
+              <span className="min-w-0">
+                <span className="font-num text-xs font-semibold">{a.action.replace(/_/g, " ")}</span>{" "}
+                <span className="text-muted-foreground">{a.entity_type?.replace(/_/g, " ").toLowerCase()}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {[a.by, a.by_role].filter(Boolean).join(" · ")}
+                  {a.remarks ? ` · ${a.remarks}` : ""}
                 </span>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.at)}</span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Dashboard() {
+  const { token, role, roleLabel, name } = useAuth();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    api.getDashboard(token)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => { live = false; };
+  }, [token, role]);
+
+  if (error) return <p className="text-sm text-status-fail">Could not load your dashboard: {error}</p>;
+  if (!data) return <p className="text-sm text-muted-foreground">Loading your dashboard…</p>;
+
+  const first = (name || "").split(" ")[0];
+  const queues = data.queues || [];
+  const wide = queues.length === 1;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">{data.headline}</h1>
+          <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">{data.hint}</p>
+        </div>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          {first && <span>Signed in as {first}</span>}
+          <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-medium", roleTone(role))}>{roleLabel}</span>
+        </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Recent test sessions</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="pb-2 font-medium">Session</th>
-                  <th className="pb-2 font-medium">Instrument</th>
-                  <th className="pb-2 font-medium">Tester</th>
-                  <th className="pb-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {RECENT_SESSIONS.map((s, i) => (
-                  <motion.tr
-                    key={s.id}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                    className="border-t border-border"
-                  >
-                    <td className="py-2.5 font-num text-xs">{s.id}</td>
-                    <td className="py-2.5">{s.instrument}</td>
-                    <td className="py-2.5 text-muted-foreground">{s.tester}</td>
-                    <td className="py-2.5">
-                      <StatusBadge status={s.status} />
-                    </td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Awaiting your approval</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {PENDING_APPROVALS.map((a) => (
-              <div key={a.id} className="rounded-lg border border-border p-3">
-                <p className="font-num text-xs text-muted-foreground">{a.id}</p>
-                <p className="text-sm font-medium">{a.instrument}</p>
-                <p className="text-xs text-muted-foreground">Submitted by {a.submittedBy}</p>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+        {data.kpis.map((kpi, i) => <Kpi key={kpi.key} kpi={kpi} index={i} />)}
       </div>
+
+      <div className={cn("grid gap-4", wide ? "" : "lg:grid-cols-2")}>
+        {queues.map((q) => <Queue key={q.key} queue={q} />)}
+      </div>
+
+      {data.charts && <Charts charts={data.charts} />}
+
+      <Activity items={data.activity} title="Recent activity" />
     </div>
   );
 }

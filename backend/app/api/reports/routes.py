@@ -28,7 +28,9 @@ from backend.app.models.report_version import ReportVersion
 from backend.app.models.digital_signature import DigitalSignature
 from backend.app.models.audit_log import AuditLog
 
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import session_participants
+from backend.app.utils.dependencies import get_current_user, require_capability
 from backend.app.services.report_generation.report_generator import create_report
 from backend.app.services.report_generation.pdf_generator import create_pdf
 from backend.app.services.verification.signing import sign_pdf_file
@@ -138,7 +140,7 @@ def get_report_data(
         .first()
     )
 
-    if not session:
+    if not session or not perm.session_visible_to(current_user, session):
         raise HTTPException(
             status_code=404,
             detail="Test session not found"
@@ -626,7 +628,7 @@ def generate_report(
     test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_capability(perm.REPORTS_GENERATE))
 ):
     session = (
         db.query(TestSession)
@@ -637,10 +639,26 @@ def generate_report(
         .first()
     )
 
-    if not session:
+    if not session or not perm.session_visible_to(current_user, session):
         raise HTTPException(
             status_code=404,
             detail="Test session not found"
+        )
+
+    # The tester drafts their own report. Reviewers and managers may regenerate
+    # it only once the work has been handed over (never while it is still the
+    # tester's working copy).
+    if perm.user_can(current_user, perm.SESSIONS_CREATE):
+        if not perm.is_owner(current_user, session):
+            raise HTTPException(
+                status_code=403,
+                detail="Only the tester who owns this session can draft its report."
+            )
+    elif session.status in perm.OPEN_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail="This session is still being tested. The report can be "
+                   "regenerated once the tester submits it."
         )
 
     existing_report = (
@@ -875,6 +893,14 @@ def download_docx(
             detail="DOCX report not found"
         )
 
+    owning_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == test_session_id)
+        .first()
+    )
+    if not perm.session_visible_to(current_user, owning_session):
+        raise HTTPException(status_code=404, detail="DOCX report not found")
+
     path = Path(report.docx_path)
 
     if not path.exists():
@@ -943,6 +969,14 @@ def download_pdf(
             detail="PDF report not found"
         )
 
+    owning_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == test_session_id)
+        .first()
+    )
+    if not perm.session_visible_to(current_user, owning_session):
+        raise HTTPException(status_code=404, detail="PDF report not found")
+
     path = Path(report.pdf_path)
 
     if not path.exists():
@@ -988,10 +1022,10 @@ def submit_report_for_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != "REVIEWER":
+    if not perm.user_can(current_user, perm.SESSIONS_REVIEW):
         raise HTTPException(
             status_code=403,
-            detail="Only a Reviewer can submit a report for approval"
+            detail="Only a reviewer can forward a report for approval"
         )
 
     session = (
@@ -1008,6 +1042,12 @@ def submit_report_for_approval(
             status_code=404,
             detail="Test session not found"
         )
+
+    problem = perm.independence_problem(
+        current_user, session_participants(db, session)
+    )
+    if problem:
+        raise HTTPException(status_code=403, detail=problem)
 
     if session.status != "UNDER REVIEW":
         raise HTTPException(
@@ -1062,18 +1102,15 @@ def approve_report(
     test_session_id: UUID,
     request: Request,
     action: str = "APPROVE",
+    reason: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    allowed_roles = {
-        "LAB_ADMIN",
-        "APPROVER"
-    }
-
-    if current_user.role not in allowed_roles:
+    if not perm.user_can(current_user, perm.SESSIONS_APPROVE):
         raise HTTPException(
             status_code=403,
-            detail="Only an Approver or Lab Admin can approve or reject reports"
+            detail="Only an authorised signatory (Lab Head, Technical Manager "
+                   "or Authorised Signatory) can approve or reject reports"
         )
 
     action = action.upper()
@@ -1118,10 +1155,26 @@ def approve_report(
             detail="Report is already approved"
         )
 
-    if current_user.role == "APPROVER" and report.report_status != "PENDING_APPROVAL":
+    # Everyone signs through the same door: the report must have been
+    # checked and forwarded by a reviewer first, and the signatory must not
+    # have taken part in the testing (maker-checker).
+    if report.report_status != "PENDING_APPROVAL":
         raise HTTPException(
             status_code=400,
-            detail="Only reports pending approval can be approved or rejected"
+            detail="Only reports pending approval can be approved or rejected. "
+                   "A reviewer must check the report and forward it first."
+        )
+
+    problem = perm.independence_problem(
+        current_user, session_participants(db, session)
+    )
+    if problem:
+        raise HTTPException(status_code=403, detail=problem)
+
+    if action == "REJECT" and not (reason or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Please give the reason for rejecting this report."
         )
 
     approval_time = datetime.now(timezone.utc)
@@ -1178,7 +1231,7 @@ def approve_report(
         digital_signature = None
 
         audit_action = "REJECT"
-        audit_remarks = "Report rejected by Approver."
+        audit_remarks = "Report rejected: " + reason.strip()
 
     # --------------------------------------------------------
     # AUDIT

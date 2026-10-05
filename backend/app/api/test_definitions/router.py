@@ -14,7 +14,7 @@ from backend.app.schemas.test_definition import (
 )
 from backend.app.utils.dependencies import (
     get_current_user,
-    require_lab_admin,
+    require_capability,
 )
 
 
@@ -68,7 +68,7 @@ def get_test_definition(
 )
 def create_test_definition(
     data: TestDefinitionCreate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     # Check that the referenced standard exists
@@ -130,7 +130,7 @@ def create_test_definition(
 def update_test_definition(
     test_definition_id: UUID,
     data: TestDefinitionUpdate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     test_definition = (

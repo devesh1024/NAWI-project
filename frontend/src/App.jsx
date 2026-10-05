@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { CustomCursor } from "@/components/cursor/CustomCursor";
 import AppShell from "@/components/layout/AppShell";
 import { ChatProvider } from "@/hooks/useChat";
+import { RouteGuard } from "@/components/layout/RouteGuard";
 import { ToastStack } from "@/components/chat/ToastStack";
 
 import Landing from "@/pages/Landing";
@@ -49,14 +50,14 @@ export default function App() {
         >
           <Route path="/app" element={<AppShell />}>
             <Route path="dashboard" element={<Dashboard />} />
-            <Route path="instruments" element={<Instruments />} />
-            <Route path="test-sessions" element={<TestSessions />} />
-            <Route path="test-sessions/:id" element={<TestSessionDetail />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="equipment" element={<Equipment />} />
-            <Route path="standards" element={<Standards />} />
-            <Route path="users" element={<Users />} />
-            <Route path="audit-log" element={<AuditLog />} />
+            <Route path="instruments" element={<RouteGuard page="instruments"><Instruments /></RouteGuard>} />
+            <Route path="test-sessions" element={<RouteGuard page="test-sessions"><TestSessions /></RouteGuard>} />
+            <Route path="test-sessions/:id" element={<RouteGuard page="test-sessions"><TestSessionDetail /></RouteGuard>} />
+            <Route path="reports" element={<RouteGuard page="reports"><Reports /></RouteGuard>} />
+            <Route path="equipment" element={<RouteGuard page="equipment"><Equipment /></RouteGuard>} />
+            <Route path="standards" element={<RouteGuard page="standards"><Standards /></RouteGuard>} />
+            <Route path="users" element={<RouteGuard page="users"><Users /></RouteGuard>} />
+            <Route path="audit-log" element={<RouteGuard page="audit-log"><AuditLog /></RouteGuard>} />
             <Route path="settings" element={<Settings />} />
           </Route>
 

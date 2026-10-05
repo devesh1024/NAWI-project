@@ -35,6 +35,9 @@ class TestSessionResponse(BaseModel):
     status: str
     overall_result: Optional[str] = None
     remarks: Optional[str] = None
+    # Filled in by the API (people's names, so screens need not look them up)
+    tester_name: Optional[str] = None
+    reviewer_name: Optional[str] = None
 
     class Config:
         from_attributes = True

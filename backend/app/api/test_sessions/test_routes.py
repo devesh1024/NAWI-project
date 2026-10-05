@@ -12,7 +12,13 @@ from backend.app.schemas.test_session_test import (
     TestSessionTestCreate,
     TestSessionTestResponse
 )
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import (
+    ensure_authorised_for_test,
+    ensure_may_run,
+    ensure_open,
+)
+from backend.app.utils.dependencies import require_capability
 
 
 router = APIRouter(
@@ -29,7 +35,7 @@ router = APIRouter(
 def add_test_to_session(
     test_session_id: UUID,
     data: TestSessionTestCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_CREATE)),
     db: Session = Depends(get_db)
 ):
     session = db.query(TestSession).filter(
@@ -43,6 +49,9 @@ def add_test_to_session(
             detail="Test session not found"
         )
 
+    ensure_may_run(current_user, session)
+    ensure_open(session)
+
     test_definition = db.query(TestDefinition).filter(
         TestDefinition.test_definition_id == data.test_definition_id,
         TestDefinition.standard_id == session.standard_id,
@@ -54,6 +63,8 @@ def add_test_to_session(
             status_code=404,
             detail="Test definition not found for this standard"
         )
+
+    ensure_authorised_for_test(current_user, test_definition.test_code)
 
     existing = db.query(TestSessionTest).filter(
         TestSessionTest.test_session_id == test_session_id,

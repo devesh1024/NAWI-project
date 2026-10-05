@@ -11,7 +11,7 @@ from backend.app.schemas.standard import (
 )
 from backend.app.utils.dependencies import (
     get_current_user,
-    require_lab_admin,
+    require_capability,
 )
 
 
@@ -63,7 +63,7 @@ def get_standard(
 )
 def create_standard(
     data: StandardCreate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     existing_standard = (
@@ -107,7 +107,7 @@ def create_standard(
 def update_standard(
     standard_id,
     data: StandardUpdate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("methods.manage")),
     db: Session = Depends(get_db),
 ):
     standard = (

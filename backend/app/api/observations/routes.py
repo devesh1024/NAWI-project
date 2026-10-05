@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,7 +13,9 @@ from backend.app.schemas.observation import (
     ObservationCreate,
     ObservationResponse
 )
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import ensure_may_enter_data, ensure_open
+from backend.app.utils.dependencies import require_capability
 
 
 router = APIRouter(
@@ -29,7 +32,7 @@ router = APIRouter(
 def create_observation(
     session_test_id: UUID,
     data: ObservationCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_ENTER_DATA)),
     db: Session = Depends(get_db)
 ):
     # Check that the session-test exists
@@ -55,6 +58,9 @@ def create_observation(
             detail="Test session not found"
         )
 
+    ensure_may_enter_data(current_user, session)
+    ensure_open(session)
+
     observation = TestObservation(
         session_test_id=session_test_id,
         parameter_name=data.parameter_name,
@@ -65,6 +71,7 @@ def create_observation(
         sequence_no=data.sequence_no,
         source=data.source,
         entered_by=current_user.user_id,
+        observed_at=datetime.now(timezone.utc),
         remarks=data.remarks
     )
 

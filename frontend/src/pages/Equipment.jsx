@@ -36,9 +36,19 @@ function toFormValues(eq) {
   };
 }
 
+// Flags calibration that has lapsed or is about to, so it is seen before a test uses the weight.
+function calibrationFlag(due) {
+  if (!due) return null;
+  const days = Math.round((new Date(due).getTime() - Date.now()) / 86400000);
+  if (days < 0) return <span className="ml-2 rounded-full bg-status-fail/10 px-2 py-0.5 text-[11px] font-medium text-status-fail">Overdue</span>;
+  if (days <= 30) return <span className="ml-2 rounded-full bg-status-pending/10 px-2 py-0.5 text-[11px] font-medium text-status-pending">Due in {days} d</span>;
+  return null;
+}
+
 export default function Equipment() {
-  const { token, role } = useAuth();
-  const isAdmin = role === "LAB_ADMIN";
+  const { token, can } = useAuth();
+  const canManage = can("equipment.manage");
+  const canDelete = can("equipment.delete");
   const [equipment, setEquipment] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -124,9 +134,11 @@ export default function Equipment() {
           <h1 className="text-2xl font-semibold">Equipment</h1>
           <p className="text-sm text-muted-foreground">Lab test equipment and calibration status.</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> Add equipment
-        </Button>
+        {canManage && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Add equipment
+          </Button>
+        )}
       </div>
 
       {/* TODO: assigning equipment to a specific test session test
@@ -176,9 +188,12 @@ export default function Equipment() {
                     </td>
                     <td className="py-2.5 font-num text-xs text-muted-foreground">
                       {eq.calibration_due_date ? new Date(eq.calibration_due_date).toLocaleDateString() : "—"}
+                      {calibrationFlag(eq.calibration_due_date)}
                     </td>
                     <td className="py-2.5">
-                      <RowActions onEdit={() => openEdit(eq)} onDelete={isAdmin ? () => handleDelete(eq) : null} />
+                      {(canManage || canDelete) && (
+                        <RowActions onEdit={canManage ? () => openEdit(eq) : null} onDelete={canDelete ? () => handleDelete(eq) : null} />
+                      )}
                     </td>
                   </motion.tr>
                 ))}

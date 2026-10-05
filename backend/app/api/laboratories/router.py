@@ -13,7 +13,7 @@ from backend.app.services.laboratory_service import (
 )
 from backend.app.utils.dependencies import (
     get_current_user,
-    require_lab_admin,
+    require_capability,
 )
 
 
@@ -43,7 +43,7 @@ def get_my_laboratory(
 )
 def update_my_laboratory(
     data: LaboratoryUpdate,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("lab.manage")),
     db: Session = Depends(get_db)
 ):
     return update_laboratory(

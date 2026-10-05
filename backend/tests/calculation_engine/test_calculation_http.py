@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+# The route now requires the session's own tester (roles follow ISO 17025).
+TESTER_ID = uuid4()
+
 from fastapi.testclient import TestClient
 
 from backend.app.database.connection import get_db
@@ -69,6 +72,8 @@ def make_session(session_id, laboratory_id, instrument_id):
         test_session_id=session_id,
         laboratory_id=laboratory_id,
         instrument_id=instrument_id,
+        tester_id=TESTER_ID,
+        status="IN PROGRESS",
     )
 
 
@@ -98,6 +103,9 @@ def make_test_definition(test_definition_id):
 
 def make_user(laboratory_id):
     return SimpleNamespace(
+        user_id=TESTER_ID,
+        role="TESTER",
+        authorization_scope=None,
         laboratory_id=laboratory_id,
     )
 

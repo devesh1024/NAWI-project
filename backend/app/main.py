@@ -33,6 +33,7 @@ from backend.app.api.test_equipment.routes import (
     router as test_equipment_router,
 )
 from backend.app.api.chat.routes import router as chat_router
+from backend.app.api.dashboard.routes import router as dashboard_router
 from backend.app.api.verify.routes import router as verify_router
 from backend.app.services.verification.signing import ensure_signing_identity
 from backend.app.realtime.socketio_server import sio
@@ -153,6 +154,7 @@ app.include_router(mpe_rules_router)
 app.include_router(environmental_conditions_router)
 app.include_router(test_equipment_router)
 app.include_router(chat_router)
+app.include_router(dashboard_router)
 app.include_router(audit_logs_router)
 
 # Public report verification - intentionally NO auth dependency (see api/verify/routes.py).

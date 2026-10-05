@@ -21,7 +21,8 @@ from backend.app.services.report_files import (
     collect_report_paths,
     remove_report_files,
 )
-from backend.app.utils.dependencies import get_current_user, require_lab_admin
+from backend.app.services import permissions as perm
+from backend.app.utils.dependencies import get_current_user, require_capability
 
 
 router = APIRouter(
@@ -78,7 +79,11 @@ def list_reports(
         .all()
     )
 
-    return [_to_response(report, session) for report, session in rows]
+    return [
+        _to_response(report, session)
+        for report, session in rows
+        if perm.session_visible_to(current_user, session)
+    ]
 
 
 @router.get("/{report_id}", response_model=ReportResponse)
@@ -88,6 +93,10 @@ def get_report(
     db: Session = Depends(get_db)
 ):
     report, session = _get_lab_report(db, report_id, current_user)
+
+    if not perm.session_visible_to(current_user, session):
+        raise HTTPException(status_code=404, detail="Report not found")
+
     return _to_response(report, session)
 
 
@@ -96,7 +105,7 @@ def update_report(
     report_id: UUID,
     data: ReportUpdate,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability("reports.generate")),
     db: Session = Depends(get_db)
 ):
     report, session = _get_lab_report(db, report_id, current_user)
@@ -132,7 +141,7 @@ def update_report(
 def delete_report(
     report_id: UUID,
     request: Request,
-    current_user: User = Depends(require_lab_admin),
+    current_user: User = Depends(require_capability("reports.delete")),
     db: Session = Depends(get_db)
 ):
     report, session = _get_lab_report(db, report_id, current_user)
