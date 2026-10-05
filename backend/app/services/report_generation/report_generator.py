@@ -27,6 +27,8 @@ from docx.shared import Inches, Pt, RGBColor
 from backend.app.services.verification.qr_utils import generate_qr_png_bytes
 
 
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
+
 # ============================================================
 # THEME - matches the finalized PDF generator
 # ============================================================
@@ -531,13 +533,17 @@ def _build_report_header(document, data):
     )
 
     logo_cell, org_cell, qr_cell = masthead.rows[0].cells
-    _set_cell_text(
-        logo_cell,
-        "LOGO\nReserved for official logo",
-        bold=True,
-        size=Pt(8),
-        align=WD_ALIGN_PARAGRAPH.CENTER,
+    
+    logo_cell.text = ""
+    logo_paragraph = logo_cell.paragraphs[0]
+    logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    logo_run = logo_paragraph.add_run()
+    logo_run.add_picture(
+        str(LOGO_PATH),
+        width=Inches(1.0),
     )
+    
     _set_cell_borders(logo_cell, size=6)
     logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 

@@ -8,6 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import Image
 from reportlab.lib.units import mm
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -21,7 +22,7 @@ from reportlab.platypus import (
 )
 
 from backend.app.services.verification.qr_utils import generate_qr_png_bytes
-
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
 
 # ============================================================
 # THEME
@@ -521,16 +522,30 @@ def build_report_header(data, styles):
     session = data.get("test_session") or {}
     instrument = data.get("instrument") or {}
 
+    logo_image = Image(
+        str(LOGO_PATH),
+        width=25 * mm,
+        height=18 * mm,
+        kind="proportional",
+    )
+
     logo = Table(
-        [[
-            Paragraph(
-                "<b>LOGO</b><br/><font size='6'>Reserved for official logo</font>",
-                styles["BodySmall"],
-            )
-        ]],
+        [[logo_image]],
         colWidths=[27 * mm],
         rowHeights=[21 * mm],
     )
+
+    logo.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.55, BORDER),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+
+
     logo.setStyle(
         TableStyle(
             [
