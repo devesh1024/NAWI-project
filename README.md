@@ -68,7 +68,7 @@ Each role gets its own dashboard and only the screens it works in; the backend
 enforces every rule, the frontend just mirrors it. Full details:
 [`docs/roles-and-permissions.md`](docs/roles-and-permissions.md).
 
-## Who works where
+Who works where
 
 - **Frontend** (`frontend/`): UI/UX, all React components, the design
   system, the motion layer, calling the backend's REST API.
