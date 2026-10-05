@@ -519,7 +519,7 @@ export function ChatProvider({ children }) {
 
   const notifications = useMemo(() => conversations.filter((c) => c.unread_count > 0), [conversations]);
 
-  // Unread count in the tab title, e.g. "(2) NAWI TestSuite".
+  // Unread count in the tab title, e.g. "(2) TulaSetu".
   useEffect(() => {
     const base = document.title.replace(/^\(\d+\)\s*/, "");
     document.title = unreadTotal > 0 ? `(${unreadTotal}) ${base}` : base;

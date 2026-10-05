@@ -1,4 +1,4 @@
-# NAWI TestSuite
+# TulaSetu
 
 OIML R-76 test report platform for legal-metrology labs. SIH 2026, Problem
 Statement 26035 (Ministry of Consumer Affairs, DoCA).

@@ -118,7 +118,7 @@ export default function Verify() {
       <div className="container max-w-2xl py-16">
         <h1 className="text-center text-2xl font-semibold md:text-3xl">Verify a report</h1>
         <p className="mx-auto mt-2 max-w-md text-center text-sm text-muted-foreground">
-          Anyone can check whether a NAWI TestSuite report is genuine — no account needed.
+          Anyone can check whether a TulaSetu report is genuine — no account needed.
         </p>
 
         {testSessionId && (

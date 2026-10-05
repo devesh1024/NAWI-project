@@ -102,7 +102,7 @@ export default function Landing() {
                 </p>
               </div>
               <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-primary">With NAWI TestSuite</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary">With TulaSetu</p>
                 <p className="mt-1 text-sm text-foreground">
                   One validated pipeline from observation to signed-off report —
                   every instrument, every test session, every result, searchable.
@@ -185,7 +185,7 @@ export default function Landing() {
 
       <footer className="border-t border-border py-8">
         <div className="container flex flex-col items-center justify-between gap-3 text-xs text-muted-foreground md:flex-row">
-          <span>© {new Date().getFullYear()} NAWI TestSuite</span>
+          <span>© {new Date().getFullYear()} TulaSetu</span>
           <span>Smart India Hackathon · Problem Statement 26035</span>
         </div>
       </footer>

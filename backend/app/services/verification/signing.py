@@ -49,7 +49,7 @@ def generate_signing_identity() -> None:
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NAWI TestSuite Report Signer")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TulaSetu Report Signer")])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()

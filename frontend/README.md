@@ -1,4 +1,4 @@
-# NAWI TestSuite — Frontend
+# TulaSetu — Frontend
 
 React + Vite + plain JavaScript (no TypeScript), Tailwind, Framer Motion.
 Talks to the team's FastAPI backend (see `../backend`) — not Supabase.

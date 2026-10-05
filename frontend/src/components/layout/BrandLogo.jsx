@@ -19,10 +19,14 @@ export function BrandLogo({ className = "" }) {
       data-cursor-hover
       className={`flex items-center gap-2 font-heading text-lg font-semibold ${className}`}
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rail text-rail-foreground">
-        <Scale className="h-4 w-4" />
+      <span className="flex h-8 w-8 items-center justify-center">
+        <img
+          src="/logo.png"
+          alt="TulaSetu"
+          className="h-8 w-8 object-contain"
+        />
       </span>
-      NAWI TestSuite
+      TulaSetu
     </Link>
   );
 }
