@@ -18,7 +18,9 @@ from backend.app.schemas.test_equipment import (
 )
 from backend.app.services.audit_service import create_audit_log
 from backend.app.services.crud_rules import equipment_delete_block_reason
-from backend.app.utils.dependencies import get_current_user, require_lab_admin
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import ensure_may_enter_data, ensure_open
+from backend.app.utils.dependencies import get_current_user, require_capability
 
 
 router = APIRouter(
@@ -39,7 +41,7 @@ router = APIRouter(
 def create_equipment(
     data: TestEquipmentCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_capability("equipment.manage")),
 ):
     equipment = TestEquipment(
         laboratory_id=current_user.laboratory_id,
@@ -107,7 +109,7 @@ def update_equipment(
     data: TestEquipmentUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_capability("equipment.manage")),
 ):
     equipment = (
         db.query(TestEquipment)
@@ -167,7 +169,7 @@ def delete_equipment(
     equipment_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(require_lab_admin),
+    current_user=Depends(require_capability("equipment.delete")),
 ):
     equipment = (
         db.query(TestEquipment)
@@ -231,7 +233,7 @@ def delete_equipment(
 def assign_equipment_to_test(
     data: TestEquipmentUsageCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_capability("sessions.enter_data")),
 ):
     # Verify equipment belongs to current laboratory
     equipment = (
@@ -268,6 +270,14 @@ def assign_equipment_to_test(
             status_code=404,
             detail="Test session test not found",
         )
+
+    owning_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == session_test.test_session_id)
+        .first()
+    )
+    ensure_may_enter_data(current_user, owning_session)
+    ensure_open(owning_session)
 
     usage = TestEquipmentUsage(
         session_test_id=data.session_test_id,

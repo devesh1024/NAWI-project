@@ -4,9 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/lib/apiClient";
+import { CAPABILITY_TEXT, roleTone, sortCapabilities } from "@/lib/roles";
+import { cn } from "@/lib/utils";
 
 export default function Settings() {
-  const { token, role } = useAuth();
+  const { token, role, roleLabel, can, profile: authProfile } = useAuth();
+  const canEditLab = can("lab.manage");
   const [profile, setProfile] = useState(null);
   const [lab, setLab] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -102,7 +105,7 @@ export default function Settings() {
               <input {...profileForm.register("designation")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
             </div>
             <div className="sm:col-span-2">
-              <p className="text-xs text-muted-foreground">Email: {profile?.email} · Role: <span className="capitalize">{role?.toLowerCase()}</span></p>
+              <p className="text-xs text-muted-foreground">Email: {profile?.email} · Role: <span className="font-medium text-foreground">{roleLabel}</span></p>
             </div>
             <div className="sm:col-span-2 flex items-center gap-3">
               <Button type="submit" size="sm" disabled={profileForm.formState.isSubmitting}>
@@ -111,6 +114,22 @@ export default function Settings() {
               {profileMsg && <span className="text-xs text-muted-foreground">{profileMsg}</span>}
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+
+      <Card>
+        <CardHeader><CardTitle>Your role</CardTitle></CardHeader>
+        <CardContent className="space-y-3 pt-0">
+          <span className={cn("inline-block rounded-full px-2.5 py-0.5 text-xs font-medium", roleTone(role))}>{roleLabel}</span>
+          <p className="text-sm text-muted-foreground">
+            Your role decides which screens you work in and what you can change. Roles follow ISO/IEC 17025, so the person who tests
+            a session is never the person who checks or signs it.
+          </p>
+          <ul className="grid gap-1 text-sm sm:grid-cols-2">
+            {sortCapabilities(authProfile?.capabilities || []).map((c) => <li key={c}>· {CAPABILITY_TEXT[c] || c}</li>)}
+            {(authProfile?.capabilities || []).length === 0 && <li className="text-muted-foreground">· Read-only access</li>}
+          </ul>
         </CardContent>
       </Card>
 
@@ -123,6 +142,7 @@ export default function Settings() {
           <CardHeader><CardTitle>Laboratory</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <form onSubmit={labForm.handleSubmit(onSaveLab)} className="grid gap-3 sm:grid-cols-2">
+              <fieldset disabled={!canEditLab} className="contents">
               <div className="sm:col-span-2">
                 <label className="text-sm font-medium">Name</label>
                 <input {...labForm.register("name")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
@@ -136,11 +156,16 @@ export default function Settings() {
                 <input {...labForm.register("phone")} className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" />
               </div>
               <div className="sm:col-span-2 flex items-center gap-3">
-                <Button type="submit" size="sm" disabled={labForm.formState.isSubmitting}>
-                  {labForm.formState.isSubmitting ? "Saving…" : "Save laboratory"}
-                </Button>
+                {canEditLab ? (
+                  <Button type="submit" size="sm" disabled={labForm.formState.isSubmitting}>
+                    {labForm.formState.isSubmitting ? "Saving…" : "Save laboratory"}
+                  </Button>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Only the Lab Head can change laboratory details.</span>
+                )}
                 {labMsg && <span className="text-xs text-muted-foreground">{labMsg}</span>}
               </div>
+              </fieldset>
             </form>
           </CardContent>
         </Card>

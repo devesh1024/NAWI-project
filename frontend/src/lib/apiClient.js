@@ -99,6 +99,12 @@ export const api = {
 
   // ---- Users (lab admin) ----------------------------------------------------
   getUsers: (token) => request("/api/users", { token }),
+  getRoles: (token) => request("/api/users/roles", { token }),
+  updateUser: (userId, data, token) =>
+    request(`/api/users/${userId}`, { method: "PATCH", body: data, token }),
+
+  // ---- Role-specific dashboard -----------------------------------------------
+  getDashboard: (token) => request("/api/dashboard", { token }),
   createUser: (data, token) => request("/api/users", { method: "POST", body: data, token }),
 
   // ---- Instruments --------------------------------------------------------
@@ -150,8 +156,14 @@ export const api = {
     request(`/api/test-sessions/${id}`, { method: "PUT", body: data, token }),
   deleteTestSession: (id, token) =>
     request(`/api/test-sessions/${id}`, { method: "DELETE", token }),
-  updateTestSessionStatus: (id, status, token) =>
-    request(`/api/test-sessions/${id}/status`, { method: "PATCH", body: { status }, token }),
+  updateTestSessionStatus: (id, status, token, reason) =>
+    request(`/api/test-sessions/${id}/status`, {
+      method: "PATCH",
+      body: reason ? { status, reason } : { status },
+      token,
+    }),
+  // What this user may do with this session right now, and the session's history.
+  getSessionWorkflow: (id, token) => request(`/api/test-sessions/${id}/workflow`, { token }),
 
   // ---- Session tests / observations / calculations ---------------------------
   addTestToSession: (testSessionId, data, token) =>
@@ -183,8 +195,18 @@ export const api = {
     request(`/api/test-sessions/${testSessionId}/report/download-pdf`, { token, raw: true }),
   getAuditLogs: (token) => request("/api/audit-logs", { token }),
 
-  approveReport: (testSessionId, token) =>
-    request(`/api/test-sessions/${testSessionId}/approve-report`, { method: "PATCH", token }),
+  approveReport: (testSessionId, token, action = "APPROVE", reason) =>
+  request(
+    `/api/test-sessions/${testSessionId}/approve-report?action=${action}` +
+      (reason ? `&reason=${encodeURIComponent(reason)}` : ""),
+    { method: "PATCH", token }
+  ),
+  
+  submitReportForApproval: (testSessionId, token) =>
+  request(`/api/test-sessions/${testSessionId}/submit-for-approval`, {
+    method: "PATCH",
+    token,
+  }),
 
   // ---- Public report verification (no auth: anyone can check a report) ------
   // QR-scan path: pure DB lookup, no file involved.

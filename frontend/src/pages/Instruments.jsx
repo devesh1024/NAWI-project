@@ -40,8 +40,9 @@ function toFormValues(inst) {
 }
 
 export default function Instruments() {
-  const { token, role } = useAuth();
-  const isAdmin = role === "LAB_ADMIN";
+  const { token, can } = useAuth();
+  const canRegister = can("instruments.register");
+  const canDelete = can("instruments.delete");
   const [instruments, setInstruments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -144,9 +145,11 @@ export default function Instruments() {
           <h1 className="text-2xl font-semibold">Instruments</h1>
           <p className="text-sm text-muted-foreground">Master data for every instrument submitted to your lab.</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> Register instrument
-        </Button>
+        {canRegister && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Register instrument
+          </Button>
+        )}
       </div>
 
       <div className="relative max-w-sm">
@@ -217,7 +220,9 @@ export default function Instruments() {
                       </span>
                     </td>
                     <td className="py-2.5">
-                      <RowActions onEdit={() => openEdit(inst)} onDelete={isAdmin ? () => handleDelete(inst) : null} />
+                      {(canRegister || canDelete) && (
+                        <RowActions onEdit={canRegister ? () => openEdit(inst) : null} onDelete={canDelete ? () => handleDelete(inst) : null} />
+                      )}
                     </td>
                   </motion.tr>
                 ))}

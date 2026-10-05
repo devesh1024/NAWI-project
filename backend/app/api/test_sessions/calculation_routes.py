@@ -28,7 +28,13 @@ from backend.app.services.calculation_engine.instrument_context_adapter import (
 from backend.app.services.calculation_engine.registry import (
     create_r76_calculation_engine,
 )
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import (
+    ensure_authorised_for_test,
+    ensure_may_run,
+    ensure_open,
+)
+from backend.app.utils.dependencies import require_capability
 
 
 router = APIRouter(
@@ -92,7 +98,7 @@ def _result_to_float(value: Any) -> float | None:
 def calculate_and_save_result(
     session_test_id: UUID,
     data: CalculationResultCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_CALCULATE)),
     db: Session = Depends(get_db),
 ):
     """
@@ -182,7 +188,12 @@ def calculate_and_save_result(
             detail="Active test definition not found",
         )
 
+    ensure_may_run(current_user, session)
+    ensure_open(session)
+
     test_code = test_definition.test_code
+
+    ensure_authorised_for_test(current_user, test_code)
 
     # ---------------------------------------------------------
     # 5. Convert database instrument → calculation context

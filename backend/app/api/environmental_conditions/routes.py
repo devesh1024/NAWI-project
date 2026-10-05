@@ -12,7 +12,9 @@ from backend.app.schemas.environmental_condition import (
     EnvironmentalConditionUpdate,
     EnvironmentalConditionResponse,
 )
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import ensure_may_enter_data, ensure_open
+from backend.app.utils.dependencies import get_current_user, require_capability
 
 
 router = APIRouter(
@@ -32,7 +34,7 @@ router = APIRouter(
 def create_environmental_condition(
     data: EnvironmentalConditionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_ENTER_DATA)),
 ):
     # --------------------------------------------------------
     # Check that the test session belongs to the user's lab
@@ -53,6 +55,9 @@ def create_environmental_condition(
             status_code=404,
             detail="Test session not found",
         )
+
+    ensure_may_enter_data(current_user, session)
+    ensure_open(session)
 
     # --------------------------------------------------------
     # Create record
@@ -102,7 +107,7 @@ def get_environmental_conditions(
         .first()
     )
 
-    if not session:
+    if not session or not perm.session_visible_to(current_user, session):
         raise HTTPException(
             status_code=404,
             detail="Test session not found",
@@ -152,7 +157,14 @@ def get_environmental_condition(
         .first()
     )
 
-    if not condition:
+    visible_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == condition.test_session_id)
+        .first()
+        if condition else None
+    )
+
+    if not condition or not perm.session_visible_to(current_user, visible_session):
         raise HTTPException(
             status_code=404,
             detail="Environmental condition not found",
@@ -173,7 +185,7 @@ def update_environmental_condition(
     environment_id: UUID,
     data: EnvironmentalConditionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_ENTER_DATA)),
 ):
     condition = (
         db.query(EnvironmentalCondition)
@@ -196,6 +208,14 @@ def update_environmental_condition(
             status_code=404,
             detail="Environmental condition not found",
         )
+
+    session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == condition.test_session_id)
+        .first()
+    )
+    ensure_may_enter_data(current_user, session)
+    ensure_open(session)
 
     if data.temperature is not None:
         condition.temperature = data.temperature
@@ -226,7 +246,7 @@ def update_environmental_condition(
 def delete_environmental_condition(
     environment_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_capability(perm.SESSIONS_ENTER_DATA)),
 ):
     condition = (
         db.query(EnvironmentalCondition)
@@ -249,6 +269,14 @@ def delete_environmental_condition(
             status_code=404,
             detail="Environmental condition not found",
         )
+
+    session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == condition.test_session_id)
+        .first()
+    )
+    ensure_may_enter_data(current_user, session)
+    ensure_open(session)
 
     db.delete(condition)
     db.commit()

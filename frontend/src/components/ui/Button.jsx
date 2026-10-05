@@ -16,6 +16,7 @@ const buttonVariants = cva(
         secondary:
           "bg-surface text-foreground border border-border shadow-soft hover:bg-muted",
         accent: "bg-accent text-accent-foreground shadow-soft hover:brightness-105",
+        destructive: "bg-status-fail text-white shadow-soft hover:brightness-110",
         ghost: "text-foreground hover:bg-muted",
         rail: "bg-white/10 text-rail-foreground hover:bg-white/15",
       },

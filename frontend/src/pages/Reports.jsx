@@ -22,8 +22,9 @@ function resultBadge(overallResult) {
 const isApproved = (report) => (report.report_status || "").toUpperCase() === "APPROVED";
 
 export default function Reports() {
-  const { token, role } = useAuth();
-  const isAdmin = role === "LAB_ADMIN";
+  const { token, can } = useAuth();
+  const canEditReport = can("reports.generate");
+  const canDelete = can("reports.delete");
 
   const [reports, setReports] = useState([]);
   const [instruments, setInstruments] = useState([]);
@@ -175,12 +176,14 @@ export default function Reports() {
                       </div>
                     </td>
                     <td className="py-2.5">
-                      <RowActions
-                        onEdit={() => openEdit(r)}
-                        editDisabled={isApproved(r) && "Approved reports cannot be edited"}
-                        onDelete={isAdmin ? () => handleDelete(r) : null}
-                        deleteDisabled={isApproved(r) && "Approved reports are permanent records"}
-                      />
+                      {(canEditReport || canDelete) && (
+                        <RowActions
+                          onEdit={canEditReport ? () => openEdit(r) : null}
+                          editDisabled={isApproved(r) && "Approved reports cannot be edited"}
+                          onDelete={canDelete ? () => handleDelete(r) : null}
+                          deleteDisabled={isApproved(r) && "Approved reports are permanent records"}
+                        />
+                      )}
                     </td>
                   </motion.tr>
                 ))}

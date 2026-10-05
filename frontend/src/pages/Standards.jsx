@@ -95,14 +95,21 @@ export default function Standards() {
 // ---------------------------------------------------------------------------
 
 function TabShell({ title, onAdd, children }) {
+  const { can } = useAuth();
+  const canManage = can("methods.manage");
+
   return (
     <Card>
       <CardContent className="pt-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
-          <Button size="sm" onClick={onAdd}>
-            <Plus className="h-4 w-4" /> Add
-          </Button>
+          {canManage ? (
+            <Button size="sm" onClick={onAdd}>
+              <Plus className="h-4 w-4" /> Add
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground">Read-only · maintained by the Lab Head and Technical Manager</span>
+          )}
         </div>
         {children}
       </CardContent>

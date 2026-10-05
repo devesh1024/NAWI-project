@@ -28,7 +28,9 @@ from backend.app.models.report_version import ReportVersion
 from backend.app.models.digital_signature import DigitalSignature
 from backend.app.models.audit_log import AuditLog
 
-from backend.app.utils.dependencies import get_current_user
+from backend.app.services import permissions as perm
+from backend.app.services.session_access import session_participants
+from backend.app.utils.dependencies import get_current_user, require_capability
 from backend.app.services.report_generation.report_generator import create_report
 from backend.app.services.report_generation.pdf_generator import create_pdf
 from backend.app.services.verification.signing import sign_pdf_file
@@ -138,7 +140,7 @@ def get_report_data(
         .first()
     )
 
-    if not session:
+    if not session or not perm.session_visible_to(current_user, session):
         raise HTTPException(
             status_code=404,
             detail="Test session not found"
@@ -626,7 +628,7 @@ def generate_report(
     test_session_id: UUID,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_capability(perm.REPORTS_GENERATE))
 ):
     session = (
         db.query(TestSession)
@@ -637,10 +639,26 @@ def generate_report(
         .first()
     )
 
-    if not session:
+    if not session or not perm.session_visible_to(current_user, session):
         raise HTTPException(
             status_code=404,
             detail="Test session not found"
+        )
+
+    # The tester drafts their own report. Reviewers and managers may regenerate
+    # it only once the work has been handed over (never while it is still the
+    # tester's working copy).
+    if perm.user_can(current_user, perm.SESSIONS_CREATE):
+        if not perm.is_owner(current_user, session):
+            raise HTTPException(
+                status_code=403,
+                detail="Only the tester who owns this session can draft its report."
+            )
+    elif session.status in perm.OPEN_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail="This session is still being tested. The report can be "
+                   "regenerated once the tester submits it."
         )
 
     existing_report = (
@@ -875,6 +893,14 @@ def download_docx(
             detail="DOCX report not found"
         )
 
+    owning_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == test_session_id)
+        .first()
+    )
+    if not perm.session_visible_to(current_user, owning_session):
+        raise HTTPException(status_code=404, detail="DOCX report not found")
+
     path = Path(report.docx_path)
 
     if not path.exists():
@@ -943,6 +969,14 @@ def download_pdf(
             detail="PDF report not found"
         )
 
+    owning_session = (
+        db.query(TestSession)
+        .filter(TestSession.test_session_id == test_session_id)
+        .first()
+    )
+    if not perm.session_visible_to(current_user, owning_session):
+        raise HTTPException(status_code=404, detail="PDF report not found")
+
     path = Path(report.pdf_path)
 
     if not path.exists():
@@ -979,29 +1013,112 @@ def download_pdf(
         media_type="application/pdf"
     )
 
+# ============================================================
+# SUBMIT FOR APPROVAL
+# ============================================================
+@router.patch("/{test_session_id}/submit-for-approval")
+def submit_report_for_approval(
+    test_session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not perm.user_can(current_user, perm.SESSIONS_REVIEW):
+        raise HTTPException(
+            status_code=403,
+            detail="Only a reviewer can forward a report for approval"
+        )
+
+    session = (
+        db.query(TestSession)
+        .filter(
+            TestSession.test_session_id == test_session_id,
+            TestSession.laboratory_id == current_user.laboratory_id
+        )
+        .first()
+    )
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Test session not found"
+        )
+
+    problem = perm.independence_problem(
+        current_user, session_participants(db, session)
+    )
+    if problem:
+        raise HTTPException(status_code=403, detail=problem)
+
+    if session.status != "UNDER REVIEW":
+        raise HTTPException(
+            status_code=400,
+            detail="Only sessions under review can be submitted for approval"
+        )
+
+    report = (
+        db.query(Report)
+        .filter(
+            Report.test_session_id == test_session_id
+        )
+        .order_by(Report.generated_at.desc())
+        .first()
+    )
+
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="No report found for this test session"
+        )
+
+    if report.report_status == "APPROVED":
+        raise HTTPException(
+            status_code=400,
+            detail="An approved report cannot be submitted for approval again"
+        )
+
+    report.report_status = "PENDING_APPROVAL"
+
+    # Record the reviewer responsible for the review.
+    session.reviewer_id = current_user.user_id
+
+    db.commit()
+    db.refresh(report)
+
+    return {
+        "message": "Report submitted for approval successfully",
+        "test_session_id": str(test_session_id),
+        "report_status": report.report_status,
+        "session_status": session.status
+    }
+
+
 
 # ============================================================
-# APPROVE REPORT
+# APPROVE / REJECT REPORT
 # ============================================================
 
 @router.patch("/{test_session_id}/approve-report")
 def approve_report(
     test_session_id: UUID,
     request: Request,
+    action: str = "APPROVE",
+    reason: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    allowed_roles = {
-        "LAB_ADMIN",
-        "REVIEWER"
-    }
-
-    if current_user.role not in allowed_roles:
+    if not perm.user_can(current_user, perm.SESSIONS_APPROVE):
         raise HTTPException(
             status_code=403,
-            detail=(
-                "Only a Lab Admin or Reviewer can approve reports"
-            )
+            detail="Only an authorised signatory (Lab Head, Technical Manager "
+                   "or Authorised Signatory) can approve or reject reports"
+        )
+
+    action = action.upper()
+
+    if action not in {"APPROVE", "REJECT"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Action must be either APPROVE or REJECT"
         )
 
     session = (
@@ -1038,37 +1155,86 @@ def approve_report(
             detail="Report is already approved"
         )
 
+    # Everyone signs through the same door: the report must have been
+    # checked and forwarded by a reviewer first, and the signatory must not
+    # have taken part in the testing (maker-checker).
+    if report.report_status != "PENDING_APPROVAL":
+        raise HTTPException(
+            status_code=400,
+            detail="Only reports pending approval can be approved or rejected. "
+                   "A reviewer must check the report and forward it first."
+        )
+
+    problem = perm.independence_problem(
+        current_user, session_participants(db, session)
+    )
+    if problem:
+        raise HTTPException(status_code=403, detail=problem)
+
+    if action == "REJECT" and not (reason or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Please give the reason for rejecting this report."
+        )
+
     approval_time = datetime.now(timezone.utc)
 
     old_report_status = report.report_status
     old_session_status = session.status
 
-    report.approved_by = current_user.user_id
-    report.approved_at = approval_time
-    report.report_status = "APPROVED"
+    # --------------------------------------------------------
+    # APPROVE
+    # --------------------------------------------------------
 
-    # Application-level approval signature record.
-    # This is NOT a PKI/certificate-based cryptographic signature.
-    signature_data = (
-        f"APPROVED_BY:{current_user.user_id};"
-        f"REPORT_HASH:{report.report_hash or 'NOT_AVAILABLE'}"
-    )
+    if action == "APPROVE":
 
-    digital_signature = DigitalSignature(
-        report_id=report.report_id,
-        user_id=current_user.user_id,
-        signature_type="APPLICATION_APPROVAL",
-        signature_data=signature_data,
-        certificate_id=None,
-        status="SIGNED"
-    )
+        report.approved_by = current_user.user_id
+        report.approved_at = approval_time
+        report.report_status = "APPROVED"
 
-    db.add(digital_signature)
+        signature_data = (
+            f"APPROVED_BY:{current_user.user_id};"
+            f"REPORT_HASH:{report.report_hash or 'NOT_AVAILABLE'}"
+        )
 
-    session.status = "APPROVED"
+        digital_signature = DigitalSignature(
+            report_id=report.report_id,
+            user_id=current_user.user_id,
+            signature_type="APPLICATION_APPROVAL",
+            signature_data=signature_data,
+            certificate_id=None,
+            status="SIGNED"
+        )
+
+        db.add(digital_signature)
+
+        session.status = "APPROVED"
+
+        audit_action = "APPROVE"
+        audit_remarks = (
+            "Report approved. Application-level approval signature "
+            "created; not a PKI/certificate-based cryptographic signature."
+        )
 
     # --------------------------------------------------------
-    # AUDIT: REPORT APPROVAL
+    # REJECT
+    # --------------------------------------------------------
+
+    else:
+
+        report.approved_by = None
+        report.approved_at = None
+        report.report_status = "REJECTED"
+
+        session.status = "REJECTED"
+
+        digital_signature = None
+
+        audit_action = "REJECT"
+        audit_remarks = "Report rejected: " + reason.strip()
+
+    # --------------------------------------------------------
+    # AUDIT
     # --------------------------------------------------------
 
     create_audit_log(
@@ -1076,7 +1242,7 @@ def approve_report(
         current_user=current_user,
         entity_type="REPORT",
         entity_id=report.report_id,
-        action="APPROVE",
+        action=audit_action,
         old_value={
             "report_status": old_report_status,
             "test_session_status": old_session_status
@@ -1084,38 +1250,57 @@ def approve_report(
         new_value={
             "report_status": report.report_status,
             "test_session_status": session.status,
-            "approved_by": str(current_user.user_id),
-            "approved_at": approval_time.isoformat(),
+            "approved_by": (
+                str(current_user.user_id)
+                if report.approved_by
+                else None
+            ),
+            "approved_at": (
+                report.approved_at.isoformat()
+                if report.approved_at
+                else None
+            ),
             "report_hash": report.report_hash
         },
-        remarks=(
-            "Report approved. Application-level approval signature "
-            "created; not a PKI/certificate-based cryptographic signature."
-        ),
+        remarks=audit_remarks,
         request=request
     )
 
     db.commit()
     db.refresh(report)
-    db.refresh(digital_signature)
+
+    if digital_signature:
+        db.refresh(digital_signature)
 
     return {
-        "message": "Report approved successfully",
+        "message": (
+            "Report approved successfully"
+            if action == "APPROVE"
+            else "Report rejected successfully"
+        ),
         "report": {
             "report_id": str(report.report_id),
             "report_number": report.report_number,
             "report_version": report.report_version,
             "report_status": report.report_status,
             "overall_result": report.overall_result,
-            "approved_by": str(report.approved_by),
+            "approved_by": (
+                str(report.approved_by)
+                if report.approved_by
+                else None
+            ),
             "approved_at": report.approved_at,
             "report_hash": report.report_hash,
-            "digital_signature": {
-                "signature_id": str(digital_signature.signature_id),
-                "signature_type": digital_signature.signature_type,
-                "status": digital_signature.status,
-                "signed_at": digital_signature.signed_at
-            }
+            "digital_signature": (
+                {
+                    "signature_id": str(digital_signature.signature_id),
+                    "signature_type": digital_signature.signature_type,
+                    "status": digital_signature.status,
+                    "signed_at": digital_signature.signed_at
+                }
+                if digital_signature
+                else None
+            )
         },
         "test_session": {
             "test_session_id": str(session.test_session_id),
